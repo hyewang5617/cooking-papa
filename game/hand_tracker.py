@@ -1,41 +1,72 @@
 import cv2
+import time
+import urllib.request
+import os
 import mediapipe as mp
+from mediapipe.tasks import python as mp_tasks
+from mediapipe.tasks.python import vision
+
+MODEL_PATH = 'hand_landmarker.task'
+MODEL_URL  = (
+    'https://storage.googleapis.com/mediapipe-models/'
+    'hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+)
+
+CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),
+    (0,5),(5,6),(6,7),(7,8),
+    (5,9),(9,10),(10,11),(11,12),
+    (9,13),(13,14),(14,15),(15,16),
+    (13,17),(17,18),(18,19),(19,20),
+    (0,17),
+]
+
+
+def _ensure_model():
+    if not os.path.exists(MODEL_PATH):
+        print('Downloading hand landmark model (~8 MB)...')
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print('Download complete.')
 
 
 class HandTracker:
     def __init__(self):
-        mp_hands = mp.solutions.hands
-        self.hands = mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=1,
-            min_detection_confidence=0.7,
+        _ensure_model()
+        base_options = mp_tasks.BaseOptions(model_asset_path=MODEL_PATH)
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.VIDEO,
+            num_hands=1,
+            min_hand_detection_confidence=0.7,
+            min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        self.mp_hands = mp_hands
-        mp_draw = mp.solutions.drawing_utils
-        self._lm_spec = mp_draw.DrawingSpec(color=(0, 230, 120), thickness=2, circle_radius=4)
-        self._cn_spec = mp_draw.DrawingSpec(color=(255, 200, 0), thickness=2)
-        self._draw = mp_draw
+        self._landmarker = vision.HandLandmarker.create_from_options(options)
 
     def process(self, frame):
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb.flags.writeable = False
-        results = self.hands.process(rgb)
-        rgb.flags.writeable = True
-        return results
+        mp_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+        )
+        return self._landmarker.detect_for_video(mp_image, int(time.time() * 1000))
 
-    def get_position(self, results, frame_shape, landmark_id=8):
-        if not results.multi_hand_landmarks:
+    def get_position(self, result, frame_shape, landmark_id=8):
+        if not result.hand_landmarks:
             return None
         h, w = frame_shape[:2]
-        lm = results.multi_hand_landmarks[0].landmark[landmark_id]
+        lm = result.hand_landmarks[0][landmark_id]
         return (int(lm.x * w), int(lm.y * h))
 
-    def draw(self, frame, results):
-        if results.multi_hand_landmarks:
-            for hand_lm in results.multi_hand_landmarks:
-                self._draw.draw_landmarks(
-                    frame, hand_lm, self.mp_hands.HAND_CONNECTIONS,
-                    self._lm_spec, self._cn_spec,
-                )
+    def draw(self, frame, result):
+        if not result.hand_landmarks:
+            return frame
+        h, w = frame.shape[:2]
+        pts = [
+            (int(lm.x * w), int(lm.y * h))
+            for lm in result.hand_landmarks[0]
+        ]
+        for a, b in CONNECTIONS:
+            cv2.line(frame, pts[a], pts[b], (255, 200, 0), 2)
+        for pt in pts:
+            cv2.circle(frame, pt, 4, (0, 230, 120), -1)
         return frame

@@ -3,14 +3,23 @@ import sys
 from game.game_manager import GameManager
 
 
-def main():
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Cannot open webcam.")
-        sys.exit(1)
+def open_camera():
+    for idx in range(3):
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            if ret:
+                print(f"Camera found at index {idx}")
+                return cap
+            cap.release()
+    return None
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+def main():
+    cap = open_camera()
+    if cap is None:
+        print("Error: Cannot open webcam. Make sure no other app is using it.")
+        sys.exit(1)
 
     game = GameManager()
     cv2.namedWindow('Vision Cooking Challenge', cv2.WINDOW_NORMAL)
@@ -26,7 +35,7 @@ def main():
         cv2.imshow('Vision Cooking Challenge', output)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        if key == 27 or key == ord('q'):  # ESC or Q
             break
         if key != 0xFF:
             game.handle_key(key)
