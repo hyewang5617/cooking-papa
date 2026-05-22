@@ -67,6 +67,21 @@ def calc_palm_center(landmarks):
     wy = (landmarks[0].y + landmarks[9].y) / 2
     return wx, wy
 
+# ── 좌표 스무딩 (EMA 저역통과 필터) ─────────────────────
+class PositionSmoother:
+    def __init__(self, alpha=0.5):
+        # alpha: 0에 가까울수록 부드럽고 느림, 1에 가까울수록 즉각적
+        self.alpha = alpha
+        self._x = self._y = None
+
+    def update(self, x, y):
+        if self._x is None:
+            self._x, self._y = x, y
+        else:
+            self._x = self.alpha * x + (1 - self.alpha) * self._x
+            self._y = self.alpha * y + (1 - self.alpha) * self._y
+        return round(self._x, 4), round(self._y, 4)
+
 # ── 속도 계산 ────────────────────────────────────────────
 class VelocityTracker:
     def __init__(self):
@@ -141,6 +156,7 @@ def main():
         return
 
     velocity = VelocityTracker()
+    smoother = PositionSmoother(alpha=0.5)
 
     cv2.namedWindow("Hand Tracking Sender", cv2.WINDOW_NORMAL)
 
@@ -166,6 +182,7 @@ def main():
             pinched, pinch_dist = calc_pinch(lms)
             px, py = calc_palm_center(lms)
             ux, uy = to_unity(px, py)
+            ux, uy = smoother.update(ux, uy)   # EMA 스무딩
             vx, vy = velocity.update(ux, uy)
 
             payload = {

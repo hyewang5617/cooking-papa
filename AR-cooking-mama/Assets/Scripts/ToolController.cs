@@ -19,19 +19,19 @@ public class ToolController : MonoBehaviour
     [Header("Tool Settings")]
     [SerializeField] private ToolType toolType = ToolType.Knife;
 
-    [Tooltip("손과 도구 사이 최대 잡기 거리 (Unity 단위)")]
-    [SerializeField] private float grabRadius = 1.5f;
+    [Tooltip("도구가 목표 위치까지 도달하는 시간(초). 낮을수록 빠름")]
+    [SerializeField] private float smoothTime = 0.08f;
 
-    [Tooltip("도구 이동 스무딩 (낮을수록 빠름)")]
-    [SerializeField] private float smoothing = 8f;
+    [Tooltip("도구 최대 이동 속도 (Unity 단위/초)")]
+    [SerializeField] private float maxSpeed = 30f;
 
-    // 도구가 잡혀있는지 여부 (외부에서 읽기 전용)
     public bool IsHeld  { get; private set; }
     public ToolType Type => toolType;
 
-    private Vector3   _targetPos;
-    private Renderer  _renderer;
-    private Color     _baseColor;
+    private Vector3  _targetPos;
+    private Vector3  _velocity = Vector3.zero;   // SmoothDamp 내부 속도
+    private Renderer _renderer;
+    private Color    _baseColor;
 
     void Start()
     {
@@ -52,23 +52,15 @@ public class ToolController : MonoBehaviour
         }
 
         Vector3 handPos = new Vector3(hand.x, hand.y, 0f);
-        float dist = Vector3.Distance(handPos, transform.position);
 
-        // Pinch 시작 → 도구가 충분히 가까우면 잡기
-        if (hand.pinched && dist < grabRadius)
-            IsHeld = true;
+        // pinch 여부만으로 잡기/놓기 결정 (거리 제한 없음)
+        IsHeld = hand.pinched;
 
-        // Pinch 해제 → 놓기
-        if (!hand.pinched)
-            IsHeld = false;
-
-        // 잡혀있으면 손 위치를 따라감
         if (IsHeld)
             _targetPos = handPos;
 
-        // 스무딩 이동
-        transform.position = Vector3.Lerp(
-            transform.position, _targetPos, Time.deltaTime * smoothing);
+        transform.position = Vector3.SmoothDamp(
+            transform.position, _targetPos, ref _velocity, smoothTime, maxSpeed);
 
         _SetHighlight(IsHeld);
     }
