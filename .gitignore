@@ -1,0 +1,40 @@
+# ── Unity ──────────────────────────────────────────────
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+*.suo
+*.user
+*.csproj
+*.sln
+.vs/
+
+# Asset meta files for ignored folders
+[Ll]ibrary.meta
+[Tt]emp.meta
+
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# ── MediaPipe model (대용량, pip install로 대체) ────────
+hand_landmarker.task
+
+# ── 게임 데이터 ─────────────────────────────────────────
+rankings.json
+
+# ── IDE ────────────────────────────────────────────────
+.vscode/
+.idea/
+
+# ── OS ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

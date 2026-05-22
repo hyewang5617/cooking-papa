@@ -22,7 +22,9 @@ def main():
         sys.exit(1)
 
     game = GameManager()
-    cv2.namedWindow('Vision Cooking Challenge', cv2.WINDOW_NORMAL)
+    WIN = 'AR Cooking Mama'
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     while True:
         ret, frame = cap.read()
@@ -31,8 +33,9 @@ def main():
             break
 
         frame = cv2.flip(frame, 1)
+        frame = cv2.resize(frame, (1280, 720))
         output = game.update(frame)
-        cv2.imshow('Vision Cooking Challenge', output)
+        cv2.imshow(WIN, output)
 
         key = cv2.waitKey(1) & 0xFF
         if key == 27 or key == ord('q'):  # ESC or Q

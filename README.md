@@ -1,106 +1,166 @@
-# Webcam-Cooking-Mama
-웹캠으로 쿠킹마마를 플레이해보자!
+# AR Cooking Mama
+
+웹캠 기반 손 추적으로 Unity 3D 조리도구를 직접 잡고 움직이는 쿠킹마마 스타일 미니게임
+
+> 컴퓨터비전 수업 텀프로젝트
 
 ---
 
-# Vision Cooking Challenge
+## 데모
 
-실시간 손 추적(Hand Tracking) 기반의 쿠킹마마 스타일 요리 게임 프로젝트입니다.  
-사용자는 웹캠 앞에서 손동작을 이용하여 재료를 썰거나, 젓거나, 뒤집는 등의 미션을 수행할 수 있으며,  
-동작의 정확도와 속도에 따라 점수를 획득합니다.
-
-본 프로젝트는 컴퓨터비전 기술을 활용하여 사용자의 손 움직임을 인식하고,  
-이를 게임 인터랙션에 적용하는 것을 목표로 합니다.
+<!-- 완성 후 GIF / 스크린샷 추가 -->
+*Coming soon*
 
 ---
 
 ## 프로젝트 소개
 
-기존의 키보드/마우스 기반 게임과 달리, 사용자의 실제 손 움직임을 입력으로 사용하는  
-인터랙티브 비전 기반 게임 시스템을 제작하고자 합니다.
+기존 키보드·마우스 대신 **실제 손 움직임**을 입력으로 사용합니다.  
+Python이 웹캠 영상에서 손을 추적하고, Unity가 그 데이터를 받아 3D 조리도구를 제어합니다.
 
-웹캠 영상을 실시간으로 분석하여 손의 위치와 움직임을 추적하고,  
-특정 제스처 및 동작 패턴을 판별하여 게임 이벤트를 수행합니다.
-
-예를 들어:
-
-- 빠르게 좌우로 움직이면 재료 썰기
-- 원형 움직임을 하면 재료 젓기
-- 위쪽으로 크게 스와이프하면 팬 뒤집기
-
-등의 동작을 인식하여 점수를 계산합니다.
-
-또한 게임 종료 후 점수를 저장하여 랭킹 시스템을 제공하며,  
-사용자는 더 높은 점수를 목표로 반복 플레이할 수 있습니다.
+| 미션 | 동작 | 판정 |
+|------|------|------|
+| 칼질 (Cutting) | 식칼을 잡고 위아래로 빠르게 움직임 | Y 속도 방향 전환 횟수 |
+| 휘핑 (Whisking) | 휘핑기를 잡고 원형으로 돌림 | 360° 회전 누적 횟수 |
 
 ---
 
-## 주요 기능 (예정)
+## 시스템 구조
 
-- 실시간 웹캠 입력 처리
-- 손 추적 (Hand Tracking)
-- 손 랜드마크 검출
-- 제스처 기반 게임 조작
-- 요리 미니게임 시스템
-- 점수 및 콤보 시스템
-- 랭킹 저장 기능
-- 게임 UI 및 실시간 시각화
+```
+[웹캠]
+  │
+  ▼
+[Python: hand_tracking_sender.py]
+  │  MediaPipe HandLandmarker
+  │  - 손 중심 좌표 (Unity 좌표계로 스케일링)
+  │  - pinch 여부 (엄지-검지 거리)
+  │  - 손 속도 (vx, vy)
+  │
+  │  UDP JSON (port 5052)
+  │
+  ▼
+[Unity: AR-cooking-mama]
+  ├─ UDPReceiver.cs      ← JSON 수신·파싱
+  ├─ ToolController.cs   ← 도구 이동 / pinch로 잡기
+  ├─ CuttingGameManager  ← 칼질 미션 판정
+  ├─ WhiskingGameManager ← 휘핑 미션 판정
+  ├─ ScoreManager        ← 점수·콤보 계산
+  └─ RankingManager      ← rankings.json 저장
+```
 
 ---
 
 ## 사용 기술
 
-- Python
-- OpenCV
-- MediaPipe
-- NumPy
+| 분류 | 기술 |
+|------|------|
+| 언어 | Python 3.12, C# |
+| 비전 | OpenCV, MediaPipe Hands |
+| 게임 엔진 | Unity 6 |
+| 통신 | UDP Socket (127.0.0.1:5052) |
+| 데이터 | JSON |
 
 ---
 
-## 구현 예정 미니게임
+## 실행 방법
 
-### 1. Cutting Game
-손을 빠르게 움직여 재료를 써는 게임
+### 사전 준비
 
-- 손 이동 속도 측정
-- 방향 기반 판정
-- 정확도 및 속도 점수 계산
+```bash
+pip install opencv-python mediapipe numpy
+```
 
-### 2. Stirring Game
-원형 움직임으로 냄비를 젓는 게임
+### 1. Python 송신기 실행
 
-- 손 궤적 추적
-- 원형 패턴 검출
-- 일정 횟수 이상 회전 시 성공
+```bash
+python hand_tracking_sender.py
+```
 
-### 3. Flipping Game
-팬을 위로 튕기는 제스처를 수행하는 게임
+첫 실행 시 `hand_landmarker.task` (~8 MB) 를 자동 다운로드합니다.  
+웹캠 창이 열리고 손이 인식되면 터미널에 좌표가 출력됩니다.
 
-- 순간적인 위쪽 이동 검출
-- 타이밍 기반 점수 계산
+### 2. Unity 수신기 실행
 
----
+1. Unity에서 `AR-cooking-mama` 프로젝트를 열기
+2. `UDPReceiver` 스크립트가 붙은 오브젝트 확인 (port: 5052)
+3. Play 버튼 클릭
 
-## 기대 효과
+> Python과 Unity는 **같은 PC에서** 실행한다고 가정합니다.
 
-본 프로젝트를 통해 다음과 같은 컴퓨터비전 기술을 실제 응용 형태로 구현할 수 있습니다.
+### 조작법
 
-- 실시간 영상처리
-- 객체 및 손 추적
-- 제스처 인식
-- 사용자 인터랙션 시스템
-- 게임형 컴퓨터비전 응용
-
-또한 단순한 영상처리 데모를 넘어,  
-사용자가 직접 플레이 가능한 형태의 인터랙티브 시스템을 구현하는 것을 목표로 합니다.
+| 동작 | 효과 |
+|------|------|
+| 손을 도구 근처로 가져가기 | 도구 하이라이트 |
+| 엄지 + 검지 붙이기 (pinch) | 도구 잡기 |
+| 잡은 상태에서 위아래 빠르게 | 칼질 판정 |
+| 잡은 상태에서 원형으로 | 휘핑 판정 |
+| ESC / Q | 종료 |
 
 ---
 
-## 개발 계획
+## Unity 씬 구성
 
-1. 웹캠 입력 및 손 추적 구현
-2. 손 랜드마크 기반 제스처 판별
-3. 미니게임 로직 구현
-4. 점수 시스템 및 UI 추가
-5. 랭킹 저장 기능 구현
-6. 최종 게임 통합 및 최적화
+```
+Main Scene
+├── [Camera] Main Camera
+│     position: (0, 0, -10)
+├── [Empty] GameManager
+│     ├── UDPReceiver.cs
+│     ├── ScoreManager.cs
+│     └── RankingManager.cs
+├── [Cube] Knife          ← ToolController (type: Knife)
+├── [Cylinder] Whisk      ← ToolController (type: Whisk)
+├── [Cube] Ingredient     ← 재료 오브젝트
+├── [Sphere] Bowl         ← 그릇 오브젝트
+└── [Canvas] UI
+      ├── Text_Score
+      ├── Text_Combo
+      ├── Text_Timer
+      └── Text_Ranking
+```
+
+> 외부 에셋 없이 Unity 기본 Primitive(Cube, Cylinder, Sphere)로 테스트 가능합니다.
+
+---
+
+## UDP 데이터 형식
+
+Python → Unity 방향, 매 프레임 전송
+
+```json
+{
+  "detected":   true,
+  "x":          2.34,
+  "y":         -1.12,
+  "vx":        -0.5,
+  "vy":         3.2,
+  "pinched":    false,
+  "pinch_dist": 0.08
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `x`, `y` | Unity 월드 좌표 (X: −8~8, Y: −4.5~4.5) |
+| `vx`, `vy` | Unity 단위/초 속도 |
+| `pinched` | 엄지-검지 거리 < 0.06 이면 true |
+
+---
+
+## 한계점
+
+- 조명이 어두우면 손 인식률 저하
+- 단일 손만 지원 (멀티핸드 미구현)
+- Unity 씬에 실제 3D 에셋 없이 Primitive 사용
+- 네트워크 지연 (로컬 UDP라 실사용 영향 없음)
+- 손이 화면 밖으로 나가면 마지막 좌표 유지
+
+---
+
+## 참고자료
+
+- [MediaPipe Hand Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)
+- [OpenCV Python Docs](https://docs.opencv.org/4.x/d6/d00/tutorial_py_root.html)
+- [Unity UDP Socket 통신](https://docs.unity3d.com/ScriptReference/Network.html)
