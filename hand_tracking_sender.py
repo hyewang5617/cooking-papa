@@ -124,12 +124,60 @@ class SharedResult:
             self._new    = True
 
     def take(self):
-        """새 결과가 있으면 반환 후 소비, 없으면 None."""
         with self._lock:
             if self._new:
                 self._new = False
                 return self._result
             return None
+
+# ── 60fps 전송용 손 상태 공유 ─────────────────────────────
+# MediaPipe(30fps)가 ground truth를 갱신하고,
+# 전송 스레드(60fps)가 velocity로 예측한 좌표를 Unity에 보냄
+class HandState:
+    def __init__(self):
+        self._lock      = threading.Lock()
+        self.detected   = False
+        self.x = self.y = self.z = 0.0
+        self.vx = self.vy        = 0.0
+        self.pinched             = False
+        self.pinch_dist          = 0.0
+        self._t                  = 0.0
+
+    def update(self, detected, x=0.0, y=0.0, z=0.0,
+               vx=0.0, vy=0.0, pinched=False, pinch_dist=0.0):
+        with self._lock:
+            self.detected   = detected
+            self.x, self.y, self.z = x, y, z
+            self.vx, self.vy       = vx, vy
+            self.pinched           = pinched
+            self.pinch_dist        = pinch_dist
+            self._t                = time.time()
+
+    def payload(self):
+        with self._lock:
+            if not self.detected:
+                return {"detected": False}
+            dt = time.time() - self._t
+            return {
+                "detected": True,
+                "x":  round(self.x + self.vx * dt, 4),
+                "y":  round(self.y + self.vy * dt, 4),
+                "z":  self.z,
+                "vx": self.vx, "vy": self.vy,
+                "pinched":    self.pinched,
+                "pinch_dist": self.pinch_dist,
+            }
+
+def _send_loop(sock, hand_state, stop_evt):
+    """60fps로 Unity에 UDP 전송. MediaPipe 갱신 사이를 velocity로 예측."""
+    interval = 1.0 / 60
+    next_t   = time.time()
+    while not stop_evt.is_set():
+        sock.sendto(json.dumps(hand_state.payload()).encode(), (UDP_IP, UDP_PORT))
+        next_t += interval
+        wait = next_t - time.time()
+        if wait > 0:
+            time.sleep(wait)
 
 def main():
     ensure_model()
@@ -153,7 +201,12 @@ def main():
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock      = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    hand_state = HandState()
+    stop_evt   = threading.Event()
+    sender     = threading.Thread(target=_send_loop, args=(sock, hand_state, stop_evt),
+                                  daemon=True)
+    sender.start()
 
     cap = None
     for idx in range(3):
@@ -212,25 +265,16 @@ def main():
                 ux, uy = to_unity_xy(px, py, PROC_W, PROC_H)
                 vx, vy = tracker.update(ux, uy)
                 uz     = calc_depth_z(lms, PROC_W, PROC_H)
-
-                payload = {
-                    "detected":   True,
-                    "x":  ux, "y": uy, "z": uz,
-                    "vx": vx, "vy": vy,
-                    "pinched":    pinched,
-                    "pinch_dist": pinch_dist,
-                }
+                hand_state.update(True, ux, uy, uz, vx, vy, pinched, pinch_dist)
                 draw_hand(display, lms, pinched)
-                label = f"({'PINCH' if pinched else 'open'})  x={ux:.1f}  y={uy:.1f}  z={uz:.1f}  FPS:{fps_display}"
+                label = f"({'GRIP' if pinched else 'open'})  x={ux:.1f}  y={uy:.1f}  z={uz:.1f}  FPS:{fps_display}"
                 cv2.putText(display, label, (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 200), 2)
             else:
                 tracker.reset()
-                payload = {"detected": False}
+                hand_state.update(False)
                 cv2.putText(display, f"No hand  FPS:{fps_display}", (20, 40),
                             cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 80, 255), 2)
-            sock.sendto(json.dumps(payload).encode(), (UDP_IP, UDP_PORT))
         else:
-            # 새 데이터 없음 — 화면만 갱신, UDP 전송 안 함
             cv2.putText(display, f"FPS:{fps_display}", (20, 40),
                         cv2.FONT_HERSHEY_DUPLEX, 0.8, (180, 180, 180), 1)
 
@@ -244,6 +288,7 @@ def main():
         if cv2.waitKey(1) & 0xFF in (27, ord("q")):
             break
 
+    stop_evt.set()
     cap.release()
     sock.close()
     cv2.destroyAllWindows()

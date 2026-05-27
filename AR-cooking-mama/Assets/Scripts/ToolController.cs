@@ -42,13 +42,7 @@ public class ToolController : MonoBehaviour
         {
             IsHeld = hand.pinched;
             if (IsHeld)
-            {
-                // 패킷 도착 위치 + 그 이후 경과 시간만큼 velocity로 예측
-                float dt       = Time.time - UDPReceiver.LastUpdateTime;
-                Vector3 base_  = new Vector3(hand.x, hand.y, hand.z);
-                Vector3 pred   = new Vector3(hand.vx * dt, hand.vy * dt, 0f);
-                transform.position = base_ + pred;
-            }
+                transform.position = new Vector3(hand.x, hand.y, hand.z);
         }
         else
         {
