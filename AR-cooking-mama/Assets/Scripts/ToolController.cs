@@ -19,7 +19,8 @@ public class ToolController : MonoBehaviour
     [Header("Tool Settings")]
     [SerializeField] private ToolType toolType = ToolType.Knife;
 
-    public bool IsHeld { get; private set; }
+    public bool IsHeld   { get; private set; }
+    public bool IsActive { get; set; } = true;   // set false to ignore hand input
     public ToolType Type => toolType;
 
     private Renderer _renderer;
@@ -33,6 +34,8 @@ public class ToolController : MonoBehaviour
 
     void Update()
     {
+        if (!IsActive) { IsHeld = false; _SetHighlight(false); return; }
+
         HandData hand = UDPReceiver.Current;
 
         if (hand.detected)

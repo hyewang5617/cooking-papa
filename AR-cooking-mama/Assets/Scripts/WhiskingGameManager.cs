@@ -48,6 +48,7 @@ public class WhiskingGameManager : MonoBehaviour
         IsRunning     = true;
         _totalAngle   = 0f;
         _prevAngle    = float.NaN;
+        if (paddle) paddle.IsActive = true;
 
         // 중심: 그릇 위치 또는 월드 원점
         _center = bowl
@@ -100,6 +101,7 @@ public class WhiskingGameManager : MonoBehaviour
     private void _Success()
     {
         IsRunning = false;
+        if (paddle) paddle.IsActive = false;
         ScoreManager.Instance?.AddScore(
             ScoreManager.CalcScore(RotationCount, targetRotations, TimeLeft, gameDuration));
         onSuccess?.Invoke();
@@ -109,6 +111,7 @@ public class WhiskingGameManager : MonoBehaviour
     private void _Fail()
     {
         IsRunning = false;
+        if (paddle) paddle.IsActive = false;
         onFail?.Invoke();
         Debug.Log("[PaddlingGame] FAIL");
     }

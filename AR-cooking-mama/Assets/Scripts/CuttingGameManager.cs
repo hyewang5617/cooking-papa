@@ -46,6 +46,7 @@ public class CuttingGameManager : MonoBehaviour
         TimeLeft  = gameDuration;
         IsRunning = true;
         _prevVy   = 0f;
+        if (knife)      knife.IsActive = true;
         if (ingredient) ingredient.SetActive(true);
         Debug.Log("[CuttingGame] Started");
     }
@@ -99,6 +100,7 @@ public class CuttingGameManager : MonoBehaviour
     private void _Success()
     {
         IsRunning = false;
+        if (knife) knife.IsActive = false;
         ScoreManager.Instance?.AddScore(ScoreManager.CalcScore(CutCount, targetCuts, TimeLeft, gameDuration));
         onSuccess?.Invoke();
         Debug.Log("[CuttingGame] SUCCESS");
@@ -107,6 +109,7 @@ public class CuttingGameManager : MonoBehaviour
     private void _Fail()
     {
         IsRunning = false;
+        if (knife) knife.IsActive = false;
         onFail?.Invoke();
         Debug.Log("[CuttingGame] FAIL");
     }
