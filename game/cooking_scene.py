@@ -537,10 +537,10 @@ def _panel(frame, x, y, w, h, color=(15, 15, 15), alpha=0.6):
     frame[y1:y2, x1:x2] = cv2.addWeighted(bg, alpha, roi, 1 - alpha, 0)
 
 
-def _demo_fist(frame, cx, cy, size=42):
-    """Semi-transparent green fist drawn as a motion guide (not the player's hand)."""
+def _demo_fist(frame, cx, cy, size=58):
+    """White cartoon-style fist (animation glove style) as a motion guide."""
     fh, fw = frame.shape[:2]
-    pad = size + 12
+    pad = size + 28
     x1, y1 = max(0, cx - pad), max(0, cy - pad)
     x2, y2 = min(fw, cx + pad), min(fh, cy + pad)
     if x2 <= x1 or y2 <= y1:
@@ -549,36 +549,54 @@ def _demo_fist(frame, cx, cy, size=42):
     canvas = np.zeros((y2 - y1, x2 - x1, 4), dtype=np.uint8)
     lx, ly = cx - x1, cy - y1
 
-    fill    = (120, 255, 120, 210)   # bright green, semi-transparent
-    outline = (30,  140, 30,  230)
+    WHITE  = (248, 248, 252, 255)
+    DARK   = (22,  22,  22,  255)
+    CREASE = (155, 155, 172, 220)
+    s      = size
+    EX     = 5   # outline expansion (draw dark at +EX, white at 0 on top)
 
-    # Fist body polygon
-    s = size
-    pts = np.array([
-        [lx - s,           ly + int(s * 0.45)],
-        [lx - int(s*0.92), ly - int(s * 0.05)],
-        [lx - int(s*0.75), ly - int(s * 0.50)],
-        [lx,               ly - int(s * 0.62)],
-        [lx + int(s*0.75), ly - int(s * 0.50)],
-        [lx + int(s*0.92), ly - int(s * 0.05)],
-        [lx + s,           ly + int(s * 0.45)],
-    ])
-    cv2.fillPoly(canvas, [pts], fill)
-    cv2.polylines(canvas, [pts], True, outline, 2)
+    # Geometry
+    py0 = ly + int(s * 0.08)   # top of palm
+    py1 = ly + int(s * 0.80)   # bottom of palm (wrist)
+    pw0 = int(s * 0.76)        # palm half-width at top
+    pw1 = int(s * 0.63)        # palm half-width at wrist
+    wr  = int(s * 0.18)        # wrist-rounding ellipse y-axis
+    fy  = ly - int(s * 0.02)   # finger circle center y
+    fr  = int(s * 0.27)        # finger circle radius
+    fxs = [lx + int(k * s) for k in (-0.51, -0.17, 0.17, 0.51)]
+    tx  = lx + int(s * 0.84)   # thumb center x
+    ty  = ly + int(s * 0.28)   # thumb center y
+    tax = int(s * 0.24)        # thumb x-axis
+    tay = int(s * 0.40)        # thumb y-axis
 
-    # Knuckle bumps
-    for kxo, kyo in [(-0.48, -0.58), (-0.16, -0.63), (0.16, -0.63), (0.48, -0.58)]:
-        kx = lx + int(kxo * s)
-        ky = ly + int(kyo * s)
-        cv2.ellipse(canvas, (kx, ky), (int(s*0.18), int(s*0.15)), 0, 0, 360, fill,    -1)
-        cv2.ellipse(canvas, (kx, ky), (int(s*0.18), int(s*0.15)), 0, 0, 360, outline,  1)
+    def _fill(col, ex=0):
+        palm = np.array([
+            [lx - pw0 - ex, py0 - ex],
+            [lx + pw0 + ex, py0 - ex],
+            [lx + pw1 + ex, py1 + ex],
+            [lx - pw1 - ex, py1 + ex],
+        ], dtype=np.int32)
+        cv2.fillPoly(canvas, [palm], col)
+        cv2.ellipse(canvas, (lx, py1 + ex), (pw1 + ex, wr + ex), 0, 0, 180, col, -1)
+        for fx in fxs:
+            cv2.circle(canvas, (fx, fy - ex // 2), fr + ex, col, -1)
+        cv2.ellipse(canvas, (tx + ex, ty), (tax + ex, tay + ex), -20, 0, 360, col, -1)
 
-    # Thumb
-    cv2.ellipse(canvas,
-                (lx + int(s*0.95), ly + int(s*0.08)),
-                (int(s*0.22), int(s*0.36)), 20, 0, 360, fill, -1)
+    _fill(DARK, EX)   # dark outline layer (slightly larger)
+    _fill(WHITE, 0)   # white fill on top (hides interior dark → only border dark visible)
 
-    # Alpha-blend onto frame
+    # Knuckle crease lines
+    for fx in fxs:
+        ky = fy + int(s * 0.24)
+        cv2.line(canvas, (fx - int(s*0.12), ky), (fx + int(s*0.12), ky), CREASE, 2)
+    # Wrist crease
+    wy = py1 - int(s * 0.20)
+    cv2.line(canvas, (lx - int(s*0.52), wy), (lx + int(s*0.52), wy), CREASE, 2)
+    # Between-finger separators
+    for i in range(len(fxs) - 1):
+        gx = (fxs[i] + fxs[i+1]) // 2
+        cv2.line(canvas, (gx, fy - fr + 6), (gx, fy + int(s*0.18)), CREASE, 2)
+
     roi = frame[y1:y2, x1:x2]
     a   = canvas[:, :, 3:4].astype(np.float32) / 255.0
     roi[:] = (canvas[:, :, :3].astype(np.float32) * a +

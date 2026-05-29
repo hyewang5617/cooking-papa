@@ -210,7 +210,6 @@ class GameManager:
             'RANKING':    self._ranking,
         }.get(self.state, lambda f: f)(frame)
 
-        draw_avatars(output, self.hand_states)
         return output
 
     def handle_key(self, key):
