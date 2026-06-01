@@ -514,11 +514,7 @@ class CookingScene(BaseMiniGame):
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
 def _draw_counter(frame, w, h):
-    cy  = _COUNTER_Y
-    roi = frame[cy:, :]
-    bg  = np.full_like(roi, (38, 33, 28))
-    cv2.addWeighted(roi, 0.55, bg, 0.45, 0, roi)
-    cv2.line(frame, (0, cy), (w, cy), (75, 65, 55), 3)
+    pass  # counter and surface are provided by the kitchen background
 
 
 def _grab_ring(frame, pos):
@@ -570,7 +566,7 @@ def _demo_fist(frame, cx, cy, size=58, openness=0.0):
     fr   = int(s * 0.27)
     fsw  = int(fr * 0.82)                # finger shaft half-width
     fxs  = [lx + int(k * s) for k in (-0.51, -0.17, 0.17, 0.51)]
-    tx   = lx + int(s * 0.84)
+    tx   = lx - int(s * 0.84)
     ty   = ly + int(s * 0.28)
     tax  = int(s * 0.24)
     tay  = int(s * 0.40)
@@ -592,28 +588,18 @@ def _demo_fist(frame, cx, cy, size=58, openness=0.0):
                               col, -1)
         for fx in fxs:
             cv2.circle(canvas, (fx, fy - ex // 2), fr + ex, col, -1)
-        cv2.ellipse(canvas, (tx + ex, ty), (tax + ex, tay + ex), -20, 0, 360, col, -1)
+        cv2.ellipse(canvas, (tx - ex, ty), (tax + ex, tay + ex), -20, 0, 360, col, -1)
 
     _fill(DARK, EX)
     _fill(WHITE, 0)
 
-    # Crease details — finger joint lines when open, knuckle lines when closed
-    if openness > 0.3:
-        joint_y = fy + int((py0 - fy) * 0.50)
-        for fx in fxs:
-            cv2.line(canvas, (fx - fsw + 2, joint_y), (fx + fsw - 2, joint_y), CREASE, 2)
-        for i in range(len(fxs) - 1):
-            gx = (fxs[i] + fxs[i+1]) // 2
+    # Back-of-hand view: only between-finger separator lines, no palm/knuckle creases
+    for i in range(len(fxs) - 1):
+        gx = (fxs[i] + fxs[i+1]) // 2
+        if openness > 0.3:
             cv2.line(canvas, (gx, fy - fr + 6), (gx, py0 - 4), CREASE, 2)
-    else:
-        for fx in fxs:
-            ky = fy + int(s * 0.24)
-            cv2.line(canvas, (fx - int(s*0.12), ky), (fx + int(s*0.12), ky), CREASE, 2)
-        for i in range(len(fxs) - 1):
-            gx = (fxs[i] + fxs[i+1]) // 2
+        else:
             cv2.line(canvas, (gx, fy - fr + 6), (gx, fy + int(s*0.18)), CREASE, 2)
-    wy = py1 - int(s * 0.20)
-    cv2.line(canvas, (lx - int(s*0.52), wy), (lx + int(s*0.52), wy), CREASE, 2)
 
     roi = frame[y1:y2, x1:x2]
     a   = canvas[:, :, 3:4].astype(np.float32) / 255.0

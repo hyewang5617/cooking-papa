@@ -7,6 +7,7 @@ from .hand_tracker import HandTracker
 from .hand_avatar   import draw_all as draw_avatars
 from .score_manager import ScoreManager
 from .cooking_scene import CookingScene
+from .background    import get_kitchen_bg
 from .ui import (draw_panel, draw_progress_bar, draw_text, draw_text_centered,
                  dim, COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER,
                  COLOR_WHITE, COLOR_GREY, FONT)
@@ -196,8 +197,11 @@ class GameManager:
     # ──────────────────────────────────────────────────────────── public ──────
 
     def update(self, frame):
-        self.tracker.process(frame)
+        self.tracker.process(frame)          # hand tracking uses real camera frame
         self.hand_states = self.tracker.get_hand_states()
+
+        h, w = frame.shape[:2]
+        bg = get_kitchen_bg(w, h).copy()     # kitchen background for display
 
         output = {
             'MENU':       self._menu,
@@ -208,7 +212,7 @@ class GameManager:
             'NAME_INPUT': self._name_input,
             'GAME_OVER':  self._game_over,
             'RANKING':    self._ranking,
-        }.get(self.state, lambda f: f)(frame)
+        }.get(self.state, lambda f: f)(bg)
 
         return output
 
