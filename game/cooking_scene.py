@@ -446,48 +446,52 @@ class CookingScene(BaseMiniGame):
         p = self._phase
 
         if p == 'grab_knife':
-            # Fist sliding in toward knife from the left
-            off = int(60 * (math.sin(t * 1.8) + 1) / 2)
+            # Hand slides in toward knife; open when far, closes as it arrives
+            wave = (math.sin(t * 1.8) + 1) / 2    # 0→1 oscillation
+            off  = int(60 * wave)
+            grip = 1.0 - wave                      # open=1 when far, fist=0 when near
             _demo_fist(frame, self._knife_pos[0] - 110 + off,
-                       self._knife_pos[1] - 20)
+                       self._knife_pos[1] - 20, openness=grip)
 
         elif p == 'chopping':
             # Fist bouncing up and down — shown to the LEFT of the cutting board
             cy = int(S1_KNIFE_Y - 70 + 80 * math.sin(t * 3.5))
             dx = S1_BOARD_X - 70
-            _demo_fist(frame, dx, cy)
-            # Direction arrow beside the demo hand
-            arrow_y = cy
+            _demo_fist(frame, dx, cy, openness=0.0)
             going_down = math.cos(t * 3.5) < 0
-            ay2 = arrow_y + (35 if going_down else -35)
-            cv2.arrowedLine(frame, (dx + 55, arrow_y), (dx + 55, ay2),
+            ay2 = cy + (35 if going_down else -35)
+            cv2.arrowedLine(frame, (dx + 55, cy), (dx + 55, ay2),
                             (0, 230, 180), 2, tipLength=0.45)
 
         elif p == 'grab_spatula':
-            off = int(60 * (math.sin(t * 1.8) + 1) / 2)
+            wave = (math.sin(t * 1.8) + 1) / 2
+            off  = int(60 * wave)
+            grip = 1.0 - wave
             _demo_fist(frame, self._spatula_pos[0] - 110 + off,
-                       self._spatula_pos[1] - 20)
+                       self._spatula_pos[1] - 20, openness=grip)
 
         elif p == 'stirring':
             # Fist orbiting the pot counter-clockwise
             r  = 115
             cx = int(S2_POT_X + r * math.cos(-t * 2.0))
             cy = int(S2_POT_Y + r * math.sin(-t * 2.0))
-            _demo_fist(frame, cx, cy)
+            _demo_fist(frame, cx, cy, openness=0.0)
 
         elif p == 'grab_pan':
-            off = int(60 * (math.sin(t * 1.8) + 1) / 2)
+            wave = (math.sin(t * 1.8) + 1) / 2
+            off  = int(60 * wave)
+            grip = 1.0 - wave
             _demo_fist(frame, self._pan_pos[0] - 110 + off,
-                       self._pan_pos[1] - 20)
+                       self._pan_pos[1] - 20, openness=grip)
 
         elif p == 'flipping':
-            # Periodic upward flick — 0.5 s flick, 1.5 s rest
-            cycle = (t % 2.0) / 2.0          # 0→1 every 2 s
+            # Periodic upward flick — 0.25 s flick, 1.75 s rest
+            cycle = (t % 2.0) / 2.0
             if cycle < 0.25:
                 off = -int(cycle / 0.25 * 130)
             else:
                 off = -int((1.0 - (cycle - 0.25) / 0.75) * 130)
-            _demo_fist(frame, S3_PAN_X - 120, S3_PAN_Y + off)
+            _demo_fist(frame, S3_PAN_X - 120, S3_PAN_Y + off, openness=0.0)
             if cycle < 0.25:
                 cv2.arrowedLine(frame,
                                 (S3_PAN_X - 120, S3_PAN_Y + off + 40),
@@ -537,10 +541,10 @@ def _panel(frame, x, y, w, h, color=(15, 15, 15), alpha=0.6):
     frame[y1:y2, x1:x2] = cv2.addWeighted(bg, alpha, roi, 1 - alpha, 0)
 
 
-def _demo_fist(frame, cx, cy, size=58):
-    """White cartoon-style fist (animation glove style) as a motion guide."""
+def _demo_fist(frame, cx, cy, size=58, openness=0.0):
+    """White cartoon-style hand — openness 0.0=fist, 1.0=fingers fully extended."""
     fh, fw = frame.shape[:2]
-    pad = size + 28
+    pad = size + 36
     x1, y1 = max(0, cx - pad), max(0, cy - pad)
     x2, y2 = min(fw, cx + pad), min(fh, cy + pad)
     if x2 <= x1 or y2 <= y1:
@@ -553,21 +557,23 @@ def _demo_fist(frame, cx, cy, size=58):
     DARK   = (22,  22,  22,  255)
     CREASE = (155, 155, 172, 220)
     s      = size
-    EX     = 5   # outline expansion (draw dark at +EX, white at 0 on top)
+    EX     = 5
 
-    # Geometry
-    py0 = ly + int(s * 0.08)   # top of palm
-    py1 = ly + int(s * 0.80)   # bottom of palm (wrist)
-    pw0 = int(s * 0.76)        # palm half-width at top
-    pw1 = int(s * 0.63)        # palm half-width at wrist
-    wr  = int(s * 0.18)        # wrist-rounding ellipse y-axis
-    fy  = ly - int(s * 0.02)   # finger circle center y
-    fr  = int(s * 0.27)        # finger circle radius
-    fxs = [lx + int(k * s) for k in (-0.51, -0.17, 0.17, 0.51)]
-    tx  = lx + int(s * 0.84)   # thumb center x
-    ty  = ly + int(s * 0.28)   # thumb center y
-    tax = int(s * 0.24)        # thumb x-axis
-    tay = int(s * 0.40)        # thumb y-axis
+    py0  = ly + int(s * 0.08)
+    py1  = ly + int(s * 0.80)
+    pw0  = int(s * 0.76)
+    pw1  = int(s * 0.63)
+    wr   = int(s * 0.18)
+    fy_c = ly - int(s * 0.02)            # fist: knuckle y (near palm top)
+    fy_o = ly - int(s * 0.55)            # open: fingertip y (extended upward)
+    fy   = int(fy_c + openness * (fy_o - fy_c))
+    fr   = int(s * 0.27)
+    fsw  = int(fr * 0.82)                # finger shaft half-width
+    fxs  = [lx + int(k * s) for k in (-0.51, -0.17, 0.17, 0.51)]
+    tx   = lx + int(s * 0.84)
+    ty   = ly + int(s * 0.28)
+    tax  = int(s * 0.24)
+    tay  = int(s * 0.40)
 
     def _fill(col, ex=0):
         palm = np.array([
@@ -578,24 +584,36 @@ def _demo_fist(frame, cx, cy, size=58):
         ], dtype=np.int32)
         cv2.fillPoly(canvas, [palm], col)
         cv2.ellipse(canvas, (lx, py1 + ex), (pw1 + ex, wr + ex), 0, 0, 180, col, -1)
+        if openness > 0.05:
+            for fx in fxs:
+                cv2.rectangle(canvas,
+                              (fx - fsw - ex, fy + int(fr * 0.35) - ex),
+                              (fx + fsw + ex, py0 + ex),
+                              col, -1)
         for fx in fxs:
             cv2.circle(canvas, (fx, fy - ex // 2), fr + ex, col, -1)
         cv2.ellipse(canvas, (tx + ex, ty), (tax + ex, tay + ex), -20, 0, 360, col, -1)
 
-    _fill(DARK, EX)   # dark outline layer (slightly larger)
-    _fill(WHITE, 0)   # white fill on top (hides interior dark → only border dark visible)
+    _fill(DARK, EX)
+    _fill(WHITE, 0)
 
-    # Knuckle crease lines
-    for fx in fxs:
-        ky = fy + int(s * 0.24)
-        cv2.line(canvas, (fx - int(s*0.12), ky), (fx + int(s*0.12), ky), CREASE, 2)
-    # Wrist crease
+    # Crease details — finger joint lines when open, knuckle lines when closed
+    if openness > 0.3:
+        joint_y = fy + int((py0 - fy) * 0.50)
+        for fx in fxs:
+            cv2.line(canvas, (fx - fsw + 2, joint_y), (fx + fsw - 2, joint_y), CREASE, 2)
+        for i in range(len(fxs) - 1):
+            gx = (fxs[i] + fxs[i+1]) // 2
+            cv2.line(canvas, (gx, fy - fr + 6), (gx, py0 - 4), CREASE, 2)
+    else:
+        for fx in fxs:
+            ky = fy + int(s * 0.24)
+            cv2.line(canvas, (fx - int(s*0.12), ky), (fx + int(s*0.12), ky), CREASE, 2)
+        for i in range(len(fxs) - 1):
+            gx = (fxs[i] + fxs[i+1]) // 2
+            cv2.line(canvas, (gx, fy - fr + 6), (gx, fy + int(s*0.18)), CREASE, 2)
     wy = py1 - int(s * 0.20)
     cv2.line(canvas, (lx - int(s*0.52), wy), (lx + int(s*0.52), wy), CREASE, 2)
-    # Between-finger separators
-    for i in range(len(fxs) - 1):
-        gx = (fxs[i] + fxs[i+1]) // 2
-        cv2.line(canvas, (gx, fy - fr + 6), (gx, fy + int(s*0.18)), CREASE, 2)
 
     roi = frame[y1:y2, x1:x2]
     a   = canvas[:, :, 3:4].astype(np.float32) / 255.0
