@@ -20,33 +20,47 @@ _PALM_IDX = [0, 1, 2, 5, 9, 13, 17]
 _TIP_IDX = [4, 8, 12, 16, 20]
 
 
-def draw_all(frame, hand_states):
+def draw_all(frame, hand_states, scale=1.0):
     """Draw a white silhouette avatar for every detected hand."""
     for hs in hand_states:
         if hs.detected and hs.landmarks:
-            _draw_one(frame, hs)
+            _draw_one(frame, hs, scale=scale)
 
 
-def _draw_one(frame, hand_state):
+def _draw_one(frame, hand_state, scale=1.0):
     lms     = hand_state.landmarks
     gripped = hand_state.gripped
     H, W    = frame.shape[:2]
 
-    # Map landmarks to display pixels
-    pts = [(int(lm.x * W), int(lm.y * H)) for lm in lms]
+    # Map landmarks to full display pixels
+    pts_full = [(int(lm.x * W), int(lm.y * H)) for lm in lms]
 
-    # Colors: fill + outline
-    if gripped:
-        fill    = (160, 255, 160)   # green tint when gripping
-        outline = (30,  100, 30)
+    # Scale the drawing around the hand's centroid
+    if scale != 1.0:
+        cx = sum(p[0] for p in pts_full) / len(pts_full)
+        cy = sum(p[1] for p in pts_full) / len(pts_full)
+        pts = [(int(cx + (p[0] - cx) * scale),
+                int(cy + (p[1] - cy) * scale)) for p in pts_full]
     else:
-        fill    = (235, 235, 255)   # near-white / slight blue
-        outline = (60,  60,  90)
+        pts = pts_full
 
-    # Find tight bounding box for a local overlay (performance)
+    # Colors
+    if gripped:
+        fill    = (160, 255, 160)
+        outline = (30,  100,  30)
+    else:
+        fill    = (235, 235, 255)
+        outline = (60,  60,   90)
+
+    # Scaled stroke / radius sizes
+    s_out  = max(2, int(20 * scale))
+    s_fill = max(1, int(13 * scale))
+    s_tip  = max(2, int(9  * scale))
+    s_kn   = max(1, int(6  * scale))
+    pad    = max(6, int(35 * scale))
+
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
-    pad = 35
     x1 = max(0, min(xs) - pad)
     y1 = max(0, min(ys) - pad)
     x2 = min(W, max(xs) + pad)
@@ -57,35 +71,33 @@ def _draw_one(frame, hand_state):
     rw, rh = x2 - x1, y2 - y1
     canvas = np.zeros((rh, rw, 4), dtype=np.uint8)
 
-    # Shift all points to local coordinates
     lp = [(p[0] - x1, p[1] - y1) for p in pts]
-
-    # ── 1) Dark outline (thick) ────────────────────────────────
     oc = (*outline, 230)
+    fc = (*fill,    210)
+
+    # ── 1) Dark outline ───────────────────────────────────────
     for seg in _FINGER_SEGS:
         for i in range(len(seg) - 1):
-            cv2.line(canvas, lp[seg[i]], lp[seg[i+1]], oc, 20)
+            cv2.line(canvas, lp[seg[i]], lp[seg[i+1]], oc, s_out)
     palm = np.array([lp[i] for i in _PALM_IDX])
     cv2.fillPoly(canvas, [palm], oc)
 
-    # ── 2) Light fill (slightly thinner) ──────────────────────
-    fc = (*fill, 210)
+    # ── 2) Light fill ─────────────────────────────────────────
     for seg in _FINGER_SEGS:
         for i in range(len(seg) - 1):
-            cv2.line(canvas, lp[seg[i]], lp[seg[i+1]], fc, 13)
+            cv2.line(canvas, lp[seg[i]], lp[seg[i+1]], fc, s_fill)
     cv2.fillPoly(canvas, [palm], fc)
 
-    # ── 3) Fingertip circles ───────────────────────────────────
+    # ── 3) Fingertip circles ──────────────────────────────────
     for t in _TIP_IDX:
-        cv2.circle(canvas, lp[t], 9, fc, -1)
-        cv2.circle(canvas, lp[t], 9, oc, 2)
+        cv2.circle(canvas, lp[t], s_tip, fc, -1)
+        cv2.circle(canvas, lp[t], s_tip, oc, max(1, s_out // 5))
 
-    # ── 4) Knuckle joints ─────────────────────────────────────
-    knuckle_idx = [1, 2, 3, 5, 6, 9, 10, 13, 14, 17, 18]
-    for k in knuckle_idx:
-        cv2.circle(canvas, lp[k], 6, fc, -1)
+    # ── 4) Knuckle joints ────────────────────────────────────
+    for k in [1, 2, 3, 5, 6, 9, 10, 13, 14, 17, 18]:
+        cv2.circle(canvas, lp[k], s_kn, fc, -1)
 
-    # ── 5) Alpha-blend onto frame ─────────────────────────────
+    # ── 5) Alpha-blend onto frame ────────────────────────────
     roi = frame[y1:y2, x1:x2]
     a   = canvas[:, :, 3:4].astype(np.float32) / 255.0
     roi[:] = (canvas[:, :, :3].astype(np.float32) * a +
