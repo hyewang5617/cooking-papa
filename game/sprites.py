@@ -1,4 +1,5 @@
 import cv2
+import math
 import numpy as np
 import os
 
@@ -33,6 +34,27 @@ def get_bowl(w=260, h=140):
     key = ('bowl', w, h)
     if key not in _cache:
         _cache[key] = _make_bowl(w, h)
+    return _cache[key]
+
+
+def get_carrot_slice(size=120):
+    key = ('carrot_slice', size)
+    if key not in _cache:
+        _cache[key] = _make_carrot_slice(size)
+    return _cache[key]
+
+
+def get_cucumber_slice(size=120):
+    key = ('cucumber_slice', size)
+    if key not in _cache:
+        _cache[key] = _make_cucumber_slice(size)
+    return _cache[key]
+
+
+def get_pepper_slice(size=120):
+    key = ('pepper_slice', size)
+    if key not in _cache:
+        _cache[key] = _make_pepper_slice(size)
     return _cache[key]
 
 
@@ -102,6 +124,92 @@ def _load_tomato(size):
     tomato[:, :, 3] = cv2.bitwise_not(dark)
 
     return cv2.resize(tomato, (size, size))
+
+
+def _make_carrot_slice(size):
+    """Top-down carrot cross-section drawn programmatically."""
+    img = np.zeros((size, size, 4), dtype=np.uint8)
+    cx = cy = size // 2
+    r = size // 2 - 4
+
+    # Main orange body
+    cv2.circle(img, (cx, cy), r,             (0, 165, 255, 255), -1)
+    # Inner growth rings (slightly deeper orange)
+    cv2.circle(img, (cx, cy), int(r * 0.68), (0, 135, 240, 255),  2)
+    cv2.circle(img, (cx, cy), int(r * 0.38), (0, 110, 225, 255),  2)
+    # Pale yellow-white core
+    cv2.circle(img, (cx, cy), max(3, int(r * 0.10)), (120, 220, 255, 255), -1)
+    # Dark outline
+    cv2.circle(img, (cx, cy), r, (0, 80, 170, 255), 3)
+    # Gloss highlight (upper-left)
+    cv2.ellipse(img, (cx - int(r*0.30), cy - int(r*0.30)),
+                (int(r*0.18), int(r*0.11)), -40, 0, 360, (120, 220, 255, 150), -1)
+    return img
+
+
+def _make_cucumber_slice(size):
+    """Top-down cucumber cross-section drawn programmatically."""
+    img = np.zeros((size, size, 4), dtype=np.uint8)
+    cx = cy = size // 2
+    r = size // 2 - 4
+
+    # Outer dark-green skin
+    cv2.circle(img, (cx, cy), r,             (25, 100, 30, 255), -1)
+    # Light-green flesh interior
+    cv2.circle(img, (cx, cy), int(r * 0.82), (115, 205, 85, 255), -1)
+    # Pale center
+    cv2.circle(img, (cx, cy), int(r * 0.30), (155, 230, 125, 255), -1)
+    # 6 seed pockets arranged in a ring
+    for i in range(6):
+        ang = math.radians(i * 60)
+        sx  = int(cx + math.cos(ang) * r * 0.54)
+        sy  = int(cy + math.sin(ang) * r * 0.54)
+        cv2.ellipse(img, (sx, sy), (int(r*0.13), int(r*0.09)),
+                    math.degrees(ang), 0, 360, (150, 220, 115, 255), -1)
+        cv2.ellipse(img, (sx, sy), (int(r*0.055), int(r*0.04)),
+                    math.degrees(ang), 0, 360, (210, 250, 195, 255), -1)
+    # Dark outline
+    cv2.circle(img, (cx, cy), r, (15, 60, 15, 255), 3)
+    # Gloss highlight
+    cv2.ellipse(img, (cx - int(r*0.28), cy - int(r*0.28)),
+                (int(r*0.15), int(r*0.09)), -40, 0, 360, (200, 255, 200, 120), -1)
+    return img
+
+
+def _make_pepper_slice(size):
+    """Top-down red bell-pepper cross-section drawn programmatically."""
+    img = np.zeros((size, size, 4), dtype=np.uint8)
+    cx = cy = size // 2
+    r = size // 2 - 4
+
+    # Thick red outer wall
+    cv2.circle(img, (cx, cy), r, (25, 35, 215, 255), -1)
+    # Cream inner cavity
+    inner_r = int(r * 0.56)
+    cv2.circle(img, (cx, cy), inner_r, (185, 245, 245, 255), -1)
+    # 3 rib walls dividing the cavity (classic bell-pepper lobes)
+    for i in range(3):
+        ang = math.radians(i * 120 + 90)
+        px2 = int(cx + math.cos(ang) * (inner_r - 2))
+        py2 = int(cy + math.sin(ang) * (inner_r - 2))
+        cv2.line(img, (cx, cy), (px2, py2), (18, 22, 160, 255), 4)
+    # Seeds in each chamber (small cream dots)
+    for i in range(3):
+        ang = math.radians(i * 120 + 90 + 60)
+        sx = int(cx + math.cos(ang) * inner_r * 0.44)
+        sy = int(cy + math.sin(ang) * inner_r * 0.44)
+        cv2.circle(img, (sx, sy), max(2, int(r*0.07)), (215, 245, 255, 255), -1)
+        sx2 = int(cx + math.cos(ang + 0.4) * inner_r * 0.36)
+        sy2 = int(cy + math.sin(ang + 0.4) * inner_r * 0.36)
+        cv2.circle(img, (sx2, sy2), max(2, int(r*0.055)), (215, 245, 255, 255), -1)
+    # Center junction dot
+    cv2.circle(img, (cx, cy), max(3, int(r*0.07)), (18, 22, 160, 255), -1)
+    # Dark outline
+    cv2.circle(img, (cx, cy), r, (12, 18, 140, 255), 3)
+    # Gloss highlight on the red wall
+    cv2.ellipse(img, (cx - int(r*0.34), cy - int(r*0.34)),
+                (int(r*0.20), int(r*0.12)), -35, 0, 360, (120, 120, 255, 150), -1)
+    return img
 
 
 def _make_spatula(size):

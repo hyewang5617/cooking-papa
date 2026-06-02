@@ -10,7 +10,8 @@ import time
 import numpy as np
 
 from .minigames.base import BaseMiniGame
-from .sprites import get_knife, get_spatula, get_tomato, get_bowl, overlay
+from .sprites import (get_knife, get_spatula, get_bowl, overlay,
+                      get_carrot_slice, get_cucumber_slice, get_pepper_slice)
 
 # ── Task targets ──────────────────────────────────────────────────────────────
 CHOP_TARGET  = 5
@@ -23,14 +24,17 @@ STIR_MIN_R   = 0.40  # world-unit min radius for stir detection
 GRAB_RADIUS  = 130   # px proximity to grab
 
 # ── Stage 1 – Cutting  (objects in center of screen, y ≈ 400-440) ─────────────
-S1_BOARD_X  = 340
-S1_BOARD_Y  = 360
-S1_BOARD_W  = 600
+S1_BOARD_X  = 310
+S1_BOARD_Y  = 358
+S1_BOARD_W  = 660
 S1_BOARD_H  = 140
-S1_KNIFE_X  = 510
+S1_KNIFE_X  = 430
 S1_KNIFE_Y  = 415
-S1_TOMATO_X = 760
-S1_TOMATO_Y = 415
+S1_VEG_Y    = 415
+S1_VEG_XS   = [580, 700, 820]   # carrot, cucumber, pepper x-positions
+# Chops each vegetable needs: total = CHOP_TARGET (5)
+S1_VEG_CHOP_OFFSET = [0, 2, 4]  # chop index when this veg starts being cut
+S1_VEG_CHOP_MAX    = [2, 2, 1]  # max visible cuts per vegetable
 
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
@@ -99,8 +103,12 @@ class CookingScene(BaseMiniGame):
 
         self._knife_spr   = get_knife(size=130)
         self._spatula_spr = get_spatula(size=120)
-        self._tomato_spr  = get_tomato(size=150)
         self._bowl_spr    = get_bowl(w=260, h=130)
+        self._veg_sprs    = [
+            get_carrot_slice(size=120),
+            get_cucumber_slice(size=120),
+            get_pepper_slice(size=120),
+        ]
 
     # ── BaseMiniGame interface ────────────────────────────────────────────────
 
@@ -376,21 +384,28 @@ class CookingScene(BaseMiniGame):
         bw, bh = S1_BOARD_W, S1_BOARD_H
         cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (55, 100, 45), -1)
         cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (35, 70,  25),  3)
-        for i in range(1, 7):
-            lx = bx + bw * i // 7
+        for i in range(1, 8):
+            lx = bx + bw * i // 8
             cv2.line(frame, (lx, by+4), (lx, by+bh-4), (45, 85, 35), 1)
 
-        overlay(frame, self._tomato_spr, S1_TOMATO_X, S1_TOMATO_Y, size=150)
-        if self.chops > 0:
-            n = min(self.chops, CHOP_TARGET)
-            for i in range(n):
-                ang = math.radians(i * 30 - (n-1) * 15 + 90)
-                r   = 62
-                x1  = int(S1_TOMATO_X + math.cos(ang) * r)
-                y1  = int(S1_TOMATO_Y + math.sin(ang) * r)
-                x2  = int(S1_TOMATO_X - math.cos(ang) * r)
-                y2  = int(S1_TOMATO_Y - math.sin(ang) * r)
-                cv2.line(frame, (x1, y1), (x2, y2), (180, 210, 255), 2, cv2.LINE_AA)
+        # Draw 3 vegetables; each gets cut marks as chops accumulate
+        for vi, (spr, vx) in enumerate(zip(self._veg_sprs, S1_VEG_XS)):
+            overlay(frame, spr, vx, S1_VEG_Y, size=115)
+
+            # How many horizontal cut lines to show on this vegetable
+            n_cuts = min(
+                max(self.chops - S1_VEG_CHOP_OFFSET[vi], 0),
+                S1_VEG_CHOP_MAX[vi]
+            )
+            for c in range(n_cuts):
+                # Evenly spaced horizontal cuts across the veggie face
+                offset_y = int((c - (n_cuts - 1) / 2.0) * 18)
+                cut_y    = S1_VEG_Y + offset_y
+                cv2.line(frame, (vx - 50, cut_y), (vx + 50, cut_y),
+                         (210, 235, 255), 2, cv2.LINE_AA)
+                # Small end-caps to suggest a real knife cut
+                cv2.circle(frame, (vx - 50, cut_y), 2, (190, 220, 255), -1)
+                cv2.circle(frame, (vx + 50, cut_y), 2, (190, 220, 255), -1)
 
         overlay(frame, self._knife_spr,
                 self._knife_pos[0], self._knife_pos[1], size=130)
@@ -471,10 +486,10 @@ class CookingScene(BaseMiniGame):
                        self._spatula_pos[1] - 20, openness=grip)
 
         elif p == 'stirring':
-            # Fist orbiting the pot counter-clockwise
+            # Fist orbiting the pot clockwise
             r  = 115
-            cx = int(S2_POT_X + r * math.cos(-t * 2.0))
-            cy = int(S2_POT_Y + r * math.sin(-t * 2.0))
+            cx = int(S2_POT_X + r * math.cos(t * 2.0))
+            cy = int(S2_POT_Y + r * math.sin(t * 2.0))
             _demo_fist(frame, cx, cy, openness=0.0)
 
         elif p == 'grab_pan':

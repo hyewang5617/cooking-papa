@@ -101,7 +101,7 @@ def _tut_draw_chop(frame, cx, cy):
 
 
 def _tut_draw_stir(frame, cx, cy):
-    """Clockwise circular arrow."""
+    """Counter-clockwise circular arrow."""
     r   = 72
     pts = [(int(cx + r * math.cos(math.radians(a))),
             int(cy + r * math.sin(math.radians(a)))) for a in range(362)]
@@ -109,6 +109,7 @@ def _tut_draw_stir(frame, cx, cy):
         t = i / len(pts)
         cv2.line(frame, pts[i], pts[i + 1],
                  (int(20 + 60 * t), int(175 + 80 * t), int(100 + 80 * t)), 4, cv2.LINE_AA)
+    # Clockwise: arrowhead near 360° pointing downward (from 345° → 361°)
     a0 = math.radians(345)
     a1 = math.radians(361)
     p0 = (int(cx + r * math.cos(a0)), int(cy + r * math.sin(a0)))
