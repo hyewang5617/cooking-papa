@@ -130,51 +130,48 @@ def _tut_draw_flip(frame, cx, cy):
                 cv2.FONT_HERSHEY_DUPLEX, 0.82, (60, 255, 120), 2)
 
 
-# Each entry: (title, body_lines, illustration_fn_or_None)
+def _tut_draw_knife(frame, cx, cy):
+    """Simple cartoon knife for tutorial interact page."""
+    # Blade
+    blade = np.array([
+        (cx, cy - 70), (cx + 14, cy - 50),
+        (cx + 10, cy + 20), (cx - 10, cy + 20),
+        (cx - 14, cy - 50),
+    ], np.int32)
+    cv2.fillPoly(frame, [blade], (170, 175, 180))
+    cv2.polylines(frame, [blade], True, (220, 225, 230), 2)
+    # Handle
+    cv2.rectangle(frame, (cx - 12, cy + 20), (cx + 12, cy + 70), (80, 55, 35), -1)
+    cv2.rectangle(frame, (cx - 12, cy + 20), (cx + 12, cy + 70), (110, 80, 50), 2)
+    # Guard
+    cv2.rectangle(frame, (cx - 18, cy + 16), (cx + 18, cy + 26), (145, 150, 155), -1)
+
+
+# Each entry: (title, body_lines, page_tag)
+# page_tag is used by the renderer for special interactive pages
 _TUT_PAGES = [
-    ('Your Virtual Hand',
-     ['Your real hand appears on screen as a WHITE hand.',
-      'Move your hand in front of the camera to try it!'],
-     None),
+    ('Show your hand to the camera!',
+     ['Your hand appears on screen as a white avatar.',
+      'TIP: Face your PALM toward the camera for best tracking.'],
+     'show_hand'),
 
-    ('Make a FIST  =  Grip',
-     ['Curl all 4 fingers tightly into your palm.',
-      'The hand turns GREEN — that means you are gripping!'],
-     _tut_draw_grip),
+    ('Move your hand left and right!',
+     ['The on-screen hand follows your real hand.',
+      'Try waving slowly in front of the camera.'],
+     'wave'),
 
-    ('Step 1  —  Grab the Knife',
-     ['Move your GREEN FIST close to the GLOWING knife.',
-      'Keep gripping — the knife will follow your hand!'],
-     _tut_draw_grab),
+    ('Make a FIST  =  Grip!',
+     ['Curl 4 fingers toward your palm to grip.',
+      'TIP: No need to squeeze hard -- a light fist works!'],
+     'grip'),
 
-    ('Step 1  —  Chop!',
-     ['Swing your hand sharply UP then DOWN.',
-      'Repeat this 5 times to chop the tomato!'],
-     _tut_draw_chop),
+    ('Grip to grab tools or press buttons!',
+     ['Try grabbing the knife on the left, or pressing the button on the right!'],
+     'interact'),
 
-    ('Step 2  —  Grab the Spatula',
-     ['After chopping, the spatula appears.',
-      'Grab it the same way — FIST near the spatula!'],
-     _tut_draw_grab),
-
-    ('Step 2  —  Stir!',
-     ['Move your hand in full CIRCLES around the pot.',
-      'Complete 3 full rotations to finish stirring!'],
-     _tut_draw_stir),
-
-    ('Step 3  —  Grab the Pan',
-     ['Find the pan on the RIGHT side of the screen.',
-      'Move your FIST close to it to grab it!'],
-     _tut_draw_grab),
-
-    ('Step 3  —  Flip!',
-     ['Flick your hand sharply UPWARD to flip the food.',
-      'Do this 2 times to finish cooking!'],
-     _tut_draw_flip),
-
-    ("You're Ready to Cook!",
-     ['Good luck!   Press SPACE to start!'],
-     None),
+    ("Are you ready?",
+     ["Let's start cooking!"],
+     'ready'),
 ]
 
 
@@ -182,7 +179,7 @@ class GameManager:
     def __init__(self):
         self.tracker     = HandTracker()
         self.score       = ScoreManager()
-        self.state       = 'MENU'
+        self.state       = 'TUTORIAL'
         self.game_idx    = 0
         self.game        = None
         self.hand_states = []
@@ -194,6 +191,12 @@ class GameManager:
         self._last_game_score  = 0
         self._player_name      = ''
         self._tutorial_idx     = 0
+        self._tut_knife_grabbed = False
+        self._tut_btn_held      = 0
+        self._tut_knife_pos     = [280, 360]
+        # Menu button grab state
+        self._menu_btn_hold    = [0, 0, 0]   # hold frames per button (START, TUTORIAL, EXIT)
+        self._MENU_HOLD_FRAMES = 22           # frames to hold over button to activate
 
     # ──────────────────────────────────────────────────────────── public ──────
 
@@ -232,11 +235,11 @@ class GameManager:
                 self._tutorial_idx += 1
                 if self._tutorial_idx >= len(_TUT_PAGES):
                     self._tutorial_idx = 0
-                    self._begin_countdown()
-            elif key == 13:              # Enter = skip to game
+                    self.state = 'MENU'   # tutorial done → title
+            elif key == 13:              # Enter = skip to title
                 self._tutorial_idx = 0
-                self._begin_countdown()
-            elif key == 27:             # ESC = back to menu
+                self.state = 'MENU'
+            elif key == 27:             # ESC = title (if came from menu)
                 self._tutorial_idx = 0
                 self.state = 'MENU'
 
@@ -282,68 +285,241 @@ class GameManager:
     # ─────────────────────────────────────────────────────────── states ──────
 
     def _menu(self, frame):
+        import math as _math
         h, w = frame.shape[:2]
-        dim(frame, 0.5)
+        t = time.time()
 
-        draw_text_centered(frame, 'AR  Cooking  Mama',
-                           h // 5, scale=1.8, color=COLOR_PRIMARY, thickness=3)
-        draw_text_centered(frame, 'Webcam + Hand Simulator',
-                           h // 5 + 65, scale=0.9, color=COLOR_WHITE)
+        # ── Title badge ───────────────────────────────────────────────────────
+        badge_w, badge_h = 640, 160
+        bx = (w - badge_w) // 2
+        by = h // 2 - 220
+        cv2.rectangle(frame, (bx + 7, by + 7), (bx + badge_w + 7, by + badge_h + 7),
+                      (20, 18, 16), -1)
+        for i in range(badge_h):
+            frac = i / badge_h
+            cv2.line(frame, (bx, by + i), (bx + badge_w, by + i),
+                     (int(20 + 10*frac), int(180 + 60*frac), int(255 - 30*frac)), 1)
+        cv2.rectangle(frame, (bx, by), (bx + badge_w, by + badge_h), (0, 160, 255), 7)
+        cv2.rectangle(frame, (bx+3, by+3), (bx+badge_w-3, by+badge_h-3), (0,220,255), 2)
 
-        if int(time.time() * 2) % 2 == 0:
-            draw_text_centered(frame, 'Press  SPACE  to learn how to play',
-                               h * 4 // 5, scale=1.1, color=COLOR_SUCCESS, thickness=2)
-        draw_text_centered(frame, 'Press  ENTER  to skip tutorial and start',
-                           h * 4 // 5 + 50, scale=0.75, color=COLOR_GREY)
+        # Title text — centered correctly
+        draw_text_centered(frame, 'Cooking  Papa',
+                           by + 100, scale=2.4, color=(255,255,255), thickness=6)
+        draw_text_centered(frame, 'Cooking  Papa',
+                           by + 100, scale=2.4, color=(0, 80, 220), thickness=2)
+
+        # ── Strawberry (left of badge) ────────────────────────────────────────
+        _draw_strawberry(frame, bx - 85, by + badge_h // 2, size=75)
+
+        # ── Broccoli (right of badge) ─────────────────────────────────────────
+        _draw_broccoli(frame, bx + badge_w + 85, by + badge_h // 2, size=75)
+
+        # ── Three buttons side by side ────────────────────────────────────────
+        btn_labels = ['START', 'TUTORIAL', 'EXIT']
+        btn_colors = [(36, 170, 56), (36, 130, 210), (55, 55, 175)]
+        btn_w, btn_h = 210, 68
+        gap      = 28
+        total_w  = 3 * btn_w + 2 * gap
+        btn_y    = h // 2 + 30
+        btns_x0  = (w - total_w) // 2
+
+        hand_sx, hand_sy, hand_gripped = -1, -1, False
+        if self.hand_states:
+            hs = self.hand_states[0]
+            if hs.detected:
+                hand_sx, hand_sy, hand_gripped = hs.screen_x, hs.screen_y, hs.gripped
+
+        activated = -1
+        for bi in range(3):
+            bx_btn = btns_x0 + bi * (btn_w + gap)
+            cx_btn = bx_btn + btn_w // 2
+            cy_btn = btn_y + btn_h // 2
+            over   = (bx_btn <= hand_sx <= bx_btn + btn_w and
+                      btn_y  <= hand_sy <= btn_y  + btn_h and hand_gripped)
+            if over:
+                self._menu_btn_hold[bi] += 1
+            else:
+                self._menu_btn_hold[bi] = max(0, self._menu_btn_hold[bi] - 2)
+            hold_frac = self._menu_btn_hold[bi] / self._MENU_HOLD_FRAMES
+            if hold_frac >= 1.0:
+                activated = bi
+                self._menu_btn_hold = [0, 0, 0]
+
+            pulse = int(5 * abs(_math.sin(t * 4 + bi))) if over else 0
+            col   = btn_colors[bi]
+            draw_col = tuple(min(255, c + 55) for c in col) if over else col
+            # Shadow
+            cv2.rectangle(frame, (bx_btn+5, btn_y+5), (bx_btn+btn_w+5, btn_y+btn_h+5),
+                          (20,18,16), -1)
+            cv2.rectangle(frame, (bx_btn-pulse, btn_y-pulse),
+                          (bx_btn+btn_w+pulse, btn_y+btn_h+pulse), draw_col, -1)
+            cv2.rectangle(frame, (bx_btn, btn_y), (bx_btn+btn_w, btn_y+btn_h),
+                          (255,255,255), 2)
+            # Button label — centered within button box
+            lbl = btn_labels[bi]
+            (tw, th), _ = cv2.getTextSize(lbl, FONT, 1.0, 2)
+            cv2.putText(frame, lbl, (cx_btn - tw//2, cy_btn + th//2),
+                        FONT, 1.0, (255,255,255), 2, cv2.LINE_AA)
+            # Hold progress bar
+            if hold_frac > 0:
+                bar_w = int((btn_w - 14) * hold_frac)
+                cv2.rectangle(frame, (bx_btn+7, btn_y+btn_h-10),
+                              (bx_btn+7+bar_w, btn_y+btn_h-4), (255,255,255), -1)
+
+        if activated == 0:
+            self._begin_countdown()
+        elif activated == 1:
+            self._tutorial_idx = 0
+            self.state = 'TUTORIAL'
+        elif activated == 2:
+            import sys; sys.exit(0)
+
+        draw_text_centered(frame, 'Grip  over  a  button  to  select',
+                           btn_y + btn_h + 44, scale=0.68,
+                           color=(200, 200, 220), thickness=1)
         return frame
 
     def _tutorial(self, frame):
+        import math as _m
         h, w = frame.shape[:2]
-        dim(frame, 0.52)
+        t    = time.time()
 
-        title, body, draw_fn = _TUT_PAGES[self._tutorial_idx]
+        # Black background
+        frame[:] = (18, 16, 14)
+
+        title, body, tag = _TUT_PAGES[self._tutorial_idx]
         total = len(_TUT_PAGES)
-        last  = self._tutorial_idx == total - 1
+        last  = (self._tutorial_idx == total - 1)
 
-        # ── Page indicator dots ───────────────────────────────────────────────
-        dot_cx = w // 2 - (total * 22) // 2
+        # Hand state
+        hand_sx, hand_sy, hand_gripped = -1, -1, False
+        if self.hand_states:
+            hs = self.hand_states[0]
+            if hs.detected:
+                hand_sx, hand_sy, hand_gripped = hs.screen_x, hs.screen_y, hs.gripped
+
+        # ── Page dots ────────────────────────────────────────────────────────
+        dot_gap = 28
+        dot_x0  = w // 2 - (total - 1) * dot_gap // 2
         for i in range(total):
-            filled = (i == self._tutorial_idx)
-            color  = COLOR_PRIMARY if filled else COLOR_GREY
-            cv2.circle(frame, (dot_cx + i * 22, 40), 6, color, -1 if filled else 2)
+            col = COLOR_PRIMARY if i == self._tutorial_idx else (80, 80, 90)
+            cv2.circle(frame, (dot_x0 + i * dot_gap, 32), 7, col, -1 if i == self._tutorial_idx else 2)
 
         # ── Title ─────────────────────────────────────────────────────────────
-        draw_text_centered(frame, title,
-                           h // 6 + 10, scale=1.5, color=COLOR_PRIMARY, thickness=3)
+        draw_text_centered(frame, title, 80, scale=0.95, color=COLOR_PRIMARY, thickness=1)
 
-        # ── Illustration ──────────────────────────────────────────────────────
-        if draw_fn:
-            draw_fn(frame, w // 2, h // 2 - 10)
-        else:
-            # Page 1: hint arrow toward where the hand avatar will appear
-            if self._tutorial_idx == 0:
-                draw_text_centered(frame, '(your hand appears here)',
-                                   h // 2 + 10, scale=0.85, color=(160, 160, 190))
-                for ox in [-12, 0, 12]:
-                    cv2.arrowedLine(frame,
-                                    (w // 2 + ox, h // 2 + 55),
-                                    (w // 2 + ox, h // 2 + 100),
-                                    (160, 160, 190), 2, tipLength=0.4)
+        # ── Illustration area ─────────────────────────────────────────────────
+        ill_cy = h // 2 - 20
+
+        if tag == 'show_hand':
+            # Single arrow pointing down to where hand will appear
+            ax = w // 2
+            cv2.arrowedLine(frame, (ax, ill_cy - 70), (ax, ill_cy + 50),
+                            (120, 120, 150), 3, tipLength=0.25)
+            draw_text_centered(frame, 'Your hand appears here',
+                               ill_cy + 90, scale=0.65, color=(140, 140, 170))
+
+        elif tag == 'wave':
+            # Left-right arrow
+            ax = w // 2
+            cv2.arrowedLine(frame, (ax + 120, ill_cy), (ax - 120, ill_cy),
+                            (80, 200, 255), 4, tipLength=0.18)
+            cv2.arrowedLine(frame, (ax - 120, ill_cy), (ax + 120, ill_cy),
+                            (80, 200, 255), 4, tipLength=0.18)
+            draw_text_centered(frame, 'Move your hand left and right!',
+                               ill_cy + 60, scale=0.65, color=(80, 200, 255))
+
+        elif tag == 'grip':
+            # Open hand → fist illustration
+            _tut_draw_grip(frame, w // 2, ill_cy)
+
+        elif tag == 'interact':
+            # Interactive: knife on left, button on right
+            knife_cx, knife_cy = 320, ill_cy
+            btn_cx,   btn_cy   = 960, ill_cy
+            btn_r = 55
+
+            # Knife
+            kx = int(self._tut_knife_pos[0])
+            ky = int(self._tut_knife_pos[1])
+            _tut_draw_knife(frame, kx, ky)
+
+            # Grab ring on knife if not held
+            if not self._tut_knife_grabbed:
+                kr = int(52 + 10 * abs(_m.sin(t * 5)))
+                cv2.circle(frame, (kx, ky), kr, (0, 200, 255), 2)
+                draw_text_centered(frame, 'GRAB', ky - kr - 18, scale=0.55, color=(0, 200, 255))
+
+            # Button
+            pulse = int(8 * abs(_m.sin(t * 4))) if not self._tut_btn_held else 0
+            bcol  = (40, 200, 80) if self._tut_btn_held >= 20 else (40, 130, 210)
+            cv2.circle(frame, (btn_cx, btn_cy), btn_r + pulse, bcol, -1)
+            cv2.circle(frame, (btn_cx, btn_cy), btn_r + pulse, (255, 255, 255), 3)
+            lbl2 = 'OK!' if self._tut_btn_held >= 20 else 'PRESS'
+            (tw2, th2), _ = cv2.getTextSize(lbl2, FONT, 0.9, 2)
+            cv2.putText(frame, lbl2, (btn_cx - tw2//2, btn_cy + th2//2),
+                        FONT, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
+            # Grab ring on button if not pressed
+            if self._tut_btn_held < 20:
+                kr2 = int(btn_r + 16 + 8 * abs(_m.sin(t * 5)))
+                cv2.circle(frame, (btn_cx, btn_cy), kr2, (0, 200, 255), 2)
+                draw_text_centered(frame, 'GRAB', btn_cy - kr2 - 18,
+                                   scale=0.55, color=(0, 200, 255))
+
+            # Progress bar under button
+            if 0 < self._tut_btn_held < 20:
+                bw2 = int((btn_r * 2) * self._tut_btn_held / 20)
+                cv2.rectangle(frame, (btn_cx - btn_r, btn_cy + btn_r + 10),
+                              (btn_cx - btn_r + bw2, btn_cy + btn_r + 18),
+                              (40, 200, 80), -1)
+
+            # Update interact state
+            if hand_gripped:
+                # Knife grab
+                if not self._tut_knife_grabbed:
+                    if (hand_sx - kx)**2 + (hand_sy - ky)**2 < 70**2:
+                        self._tut_knife_grabbed = True
+                else:
+                    self._tut_knife_pos = [hand_sx, hand_sy]
+
+                # Button hold
+                if (hand_sx - btn_cx)**2 + (hand_sy - btn_cy)**2 < (btn_r + 30)**2:
+                    self._tut_btn_held = min(self._tut_btn_held + 1, 22)
+                else:
+                    self._tut_btn_held = max(0, self._tut_btn_held - 1)
+            else:
+                if self._tut_knife_grabbed:
+                    self._tut_knife_grabbed = False
+                self._tut_btn_held = max(0, self._tut_btn_held - 2)
+
+            draw_text_centered(frame, 'Grip the knife on the LEFT  or  press the button on the RIGHT!',
+                               ill_cy + 120, scale=0.62, color=(200, 200, 210))
+
+        elif tag == 'ready':
+            draw_text_centered(frame, "Are you ready?", ill_cy - 30,
+                               scale=1.6, color=(80, 255, 160), thickness=3)
+            draw_text_centered(frame, "Let's start cooking!", ill_cy + 50,
+                               scale=1.1, color=COLOR_WHITE, thickness=2)
 
         # ── Body text ─────────────────────────────────────────────────────────
-        text_y = h * 3 // 4
+        text_y = h * 3 // 4 + 10
         for i, line in enumerate(body):
-            draw_text_centered(frame, line, text_y + i * 44,
-                               scale=0.85, color=COLOR_WHITE)
+            draw_text_centered(frame, line, text_y + i * 38,
+                               scale=0.62, color=(200, 200, 210), thickness=1)
 
-        # ── Navigation hint ───────────────────────────────────────────────────
-        hint = 'SPACE: Start Cooking!' if last else 'SPACE: Next  →'
-        if int(time.time() * 2) % 2 == 0:
-            draw_text_centered(frame, hint, h - 55,
-                               scale=1.0, color=COLOR_SUCCESS, thickness=2)
-        if not last:
-            draw_text_centered(frame, 'ENTER: skip tutorial   ESC: back to menu',
-                               h - 22, scale=0.6, color=COLOR_GREY)
+        # ── Nav hint ──────────────────────────────────────────────────────────
+        nav = 'SPACE: Title!' if last else 'SPACE: Next  ->'
+        if int(t * 2) % 2 == 0:
+            draw_text_centered(frame, nav, h - 52, scale=0.78,
+                               color=COLOR_SUCCESS, thickness=1)
+        draw_text_centered(frame, 'ENTER: skip tutorial   ESC: title',
+                           h - 24, scale=0.52, color=COLOR_GREY)
+
+        # Reset interact state when leaving page
+        if tag != 'interact':
+            self._tut_knife_grabbed = False
+            self._tut_btn_held      = 0
+            self._tut_knife_pos     = [320, h // 2 - 20]
 
         return frame
 
@@ -495,4 +671,70 @@ class GameManager:
                           color=COLOR_DANGER if (self.game.timer_started and
                                                   self.game.time_remaining < 15)
                                             else COLOR_SUCCESS)
+
+
+# ── Title screen decorations ─────────────────────────────────────────────────
+
+def _draw_strawberry(frame, cx, cy, size=75):
+    """Cartoon strawberry."""
+    import math as _m
+    s = size
+    # Body (red teardrop)
+    body_pts = np.array([
+        [cx,           cy - s],
+        [cx + int(s*0.72), cy - int(s*0.3)],
+        [cx + int(s*0.55), cy + int(s*0.5)],
+        [cx,           cy + s],
+        [cx - int(s*0.55), cy + int(s*0.5)],
+        [cx - int(s*0.72), cy - int(s*0.3)],
+    ], np.int32)
+    cv2.fillPoly(frame, [body_pts + np.array([2,3])], (22, 30, 100))  # shadow
+    cv2.fillPoly(frame, [body_pts], (35, 50, 220))   # red BGR
+    cv2.fillPoly(frame, [body_pts], (45, 65, 235))
+    cv2.polylines(frame, [body_pts], True, (20, 30, 160), 3)
+    # Seeds
+    rng = np.random.default_rng(seed=3)
+    for _ in range(14):
+        sx = cx + int(rng.integers(-int(s*0.45), int(s*0.45)))
+        sy = cy + int(rng.integers(-int(s*0.6), int(s*0.7)))
+        cv2.ellipse(frame, (sx, sy), (3, 4), 0, 0, 360, (20, 180, 230), -1)
+    # Leaves (green)
+    for ang in [-30, 0, 30]:
+        a = _m.radians(ang - 90)
+        lx = cx + int(_m.cos(a) * s * 0.35)
+        ly = cy - s + int(_m.sin(a) * s * 0.35)
+        leaf_pts = np.array([
+            [cx, cy - s],
+            [lx - int(s*0.18), ly - int(s*0.25)],
+            [lx, ly - int(s*0.5)],
+            [lx + int(s*0.18), ly - int(s*0.25)],
+        ], np.int32)
+        cv2.fillPoly(frame, [leaf_pts], (28, 140, 50))
+        cv2.polylines(frame, [leaf_pts], True, (18, 100, 35), 2)
+
+
+def _draw_broccoli(frame, cx, cy, size=75):
+    """Cartoon broccoli."""
+    s = size
+    # Stem
+    stem_w = int(s * 0.22)
+    cv2.rectangle(frame, (cx - stem_w, cy + int(s*0.1)),
+                  (cx + stem_w, cy + s), (28, 100, 45), -1)
+    cv2.rectangle(frame, (cx - stem_w, cy + int(s*0.1)),
+                  (cx + stem_w, cy + s), (18, 75, 30), 2)
+    # Main head clusters
+    clusters = [(0, -int(s*0.35), int(s*0.52)),
+                (-int(s*0.38), -int(s*0.12), int(s*0.36)),
+                ( int(s*0.38), -int(s*0.12), int(s*0.36)),
+                (-int(s*0.22),  int(s*0.08), int(s*0.28)),
+                ( int(s*0.22),  int(s*0.08), int(s*0.28))]
+    for dx, dy, r in clusters:
+        cv2.circle(frame, (cx+dx+2, cy+dy+3), r, (18, 75, 30), -1)
+        cv2.circle(frame, (cx+dx, cy+dy), r, (42, 155, 60), -1)
+        # Darker bumps on top
+        for bx_off, by_off in [(-r//3,-r//3),(0,-r//2),(r//3,-r//3)]:
+            cv2.circle(frame, (cx+dx+bx_off, cy+dy+by_off), r//4, (30, 125, 48), -1)
+    # Outline
+    cv2.ellipse(frame, (cx, cy - int(s*0.18)), (int(s*0.72), int(s*0.62)),
+                0, 0, 360, (18, 90, 35), 3)
 
