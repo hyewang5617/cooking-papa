@@ -450,18 +450,18 @@ class CookingScene(BaseMiniGame):
 
             overlay(frame, spr, vx, S1_VEG_Y, size=115)
 
-            # Horizontal cut marks before the final split
+            # Vertical cut marks before the final split
             n_cuts = min(
                 max(self.chops - S1_VEG_CHOP_OFFSET[vi], 0),
                 S1_VEG_CHOP_MAX[vi] - 1
             )
             for c in range(n_cuts):
-                offset_y = int((c - (n_cuts - 1) / 2.0) * 18)
-                cut_y    = S1_VEG_Y + offset_y
-                cv2.line(frame, (vx - 50, cut_y), (vx + 50, cut_y),
+                offset_x = int((c - (n_cuts - 1) / 2.0) * 22)
+                cut_x    = vx + offset_x
+                cv2.line(frame, (cut_x, S1_VEG_Y - 50), (cut_x, S1_VEG_Y + 50),
                          (210, 235, 255), 2, cv2.LINE_AA)
-                cv2.circle(frame, (vx - 50, cut_y), 2, (190, 220, 255), -1)
-                cv2.circle(frame, (vx + 50, cut_y), 2, (190, 220, 255), -1)
+                cv2.circle(frame, (cut_x, S1_VEG_Y - 50), 2, (190, 220, 255), -1)
+                cv2.circle(frame, (cut_x, S1_VEG_Y + 50), 2, (190, 220, 255), -1)
 
             # Pulsing target ring on the current active vegetable during chopping
             if self._phase == 'chopping':
@@ -469,7 +469,7 @@ class CookingScene(BaseMiniGame):
                 elif self.chops < S1_VEG_CHOP_OFFSET[2]: tvi = 1
                 else:                                      tvi = 2
                 if vi == tvi:
-                    _grab_ring(frame, [vx, S1_VEG_Y])
+                    _grab_ring(frame, [vx, S1_VEG_Y], label='CHOP')
 
         overlay(frame, self._knife_spr,
                 self._knife_pos[0], self._knife_pos[1], size=130)
@@ -599,11 +599,11 @@ def _draw_counter(frame, w, h):
     pass  # counter and surface are provided by the kitchen background
 
 
-def _grab_ring(frame, pos):
+def _grab_ring(frame, pos, label='GRAB'):
     t = time.time()
     r = int(52 + 14 * math.sin(t * 5))
     cv2.circle(frame, (int(pos[0]), int(pos[1])), r, (0, 200, 255), 2, cv2.LINE_AA)
-    _shadow_text(frame, 'GRAB', int(pos[0]), int(pos[1]) - r - 10,
+    _shadow_text(frame, label, int(pos[0]), int(pos[1]) - r - 10,
                  0.55, (0, 200, 255), 1, center=True)
 
 
