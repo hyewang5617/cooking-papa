@@ -14,7 +14,7 @@ from mediapipe.tasks.python import vision
 UDP_IP   = "127.0.0.1"
 UDP_PORT = 5052
 
-GRIP_THRESHOLD = 0.17   # AND 조건 보조용 거리 임계값
+GRIP_THRESHOLD = 0.1   # AND 조건 보조용 거리 임계값
 PALM_REAL_M     = 0.085
 Z_REF_M         = 0.55
 UNITY_SCALE     = 9.0

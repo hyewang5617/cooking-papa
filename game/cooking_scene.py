@@ -252,8 +252,9 @@ class CookingScene(BaseMiniGame):
         self._meat_beef_y         = float(_GR_BEEF_Y0)
         self._meat_beef_grabbed   = False
         self._meat_handle_ang     = -math.pi / 2
-        self._meat_handle_grabbed = False
-        self._meat_prev_ang       = None
+        self._meat_handle_grabbed  = False
+        self._meat_handle_no_grip  = 0
+        self._meat_prev_ang        = None
         self._meat_total_ang      = 0.0
         self.meat_stirs           = 0
         self._meat_strand_count   = 0
@@ -1059,6 +1060,14 @@ class CookingScene(BaseMiniGame):
             _shadow_text(frame, pct_str,
                          ONION_PAN_CX, ONION_PAN_CY,
                          2.8, (255, 230, 80), 4, center=True)
+        else:
+            # Pulsing grab ring on flame button
+            ring_r = int(_FLAME_BTN_R + 20 + 10 * abs(math.sin(t * 5)))
+            cv2.circle(frame, (_FLAME_BTN_CX, _FLAME_BTN_CY),
+                       ring_r, (0, 200, 255), 3, cv2.LINE_AA)
+            _shadow_text(frame, 'GRAB!', _FLAME_BTN_CX,
+                         _FLAME_BTN_CY - ring_r - 12,
+                         0.65, (0, 200, 255), 1, center=True)
 
         # ── Spatula ───────────────────────────────────────────────────────────
         sx = int(self._fry_spatula_pos[0])
@@ -1074,8 +1083,9 @@ class CookingScene(BaseMiniGame):
         self._meat_beef_y         = float(_GR_BEEF_Y0)
         self._meat_beef_grabbed   = False
         self._meat_handle_ang     = -math.pi / 2
-        self._meat_handle_grabbed = False
-        self._meat_prev_ang       = None
+        self._meat_handle_grabbed  = False
+        self._meat_handle_no_grip  = 0
+        self._meat_prev_ang        = None
         self._meat_total_ang      = 0.0
         self.meat_stirs           = 0
         self._meat_strand_count   = 0
@@ -1107,11 +1117,19 @@ class CookingScene(BaseMiniGame):
         return []
 
     def _do_meat_grind(self, hands):
+        _RELEASE_FRAMES = 10   # frames of no-grip before handle drops
+        has_grip = any(h.detected and h.gripped for h in hands)
+        if self._meat_handle_grabbed:
+            if not has_grip:
+                self._meat_handle_no_grip += 1
+                if self._meat_handle_no_grip >= _RELEASE_FRAMES:
+                    self._meat_handle_grabbed = False
+                    self._meat_handle_no_grip = 0
+                    self._meat_prev_ang = None
+            else:
+                self._meat_handle_no_grip = 0
         for hand in hands:
             if not hand.detected or not hand.gripped:
-                if self._meat_handle_grabbed:
-                    self._meat_handle_grabbed = False
-                    self._meat_prev_ang = None
                 continue
             hx = float(hand.screen_x)
             hy = float(hand.screen_y)
@@ -1415,47 +1433,47 @@ class CookingScene(BaseMiniGame):
         mix = self._knead_mix_angle
         sub = self._knead_sub
 
-        # ── Bowl shadow & body ────────────────────────────────────────────────
+        # ── Bowl: draw outer ring only (no full fill that would cover meat) ───
         cv2.ellipse(frame, (cx + 10, cy + 24), (rx - 12, 30), 0, 0, 360, (22, 20, 18), -1)
-        # Pale blue-gray ceramic bowl
+        # Outer bowl wall (ring between outer and inner ellipse)
         cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 360, (230, 215, 185), -1)
-        cv2.ellipse(frame, (cx, cy), (rx - 18, ry - 13), 0, 0, 360, (215, 200, 168), -1)
+        # Inner bowl surface (base for food)
+        cv2.ellipse(frame, (cx, cy), (rx - 20, ry - 15), 0, 0, 360, (215, 200, 168), -1)
 
-        # ── Meat fill: 2~3 large ellipses rotating with mix_angle ────────────
-        # Fixed large blob definitions (offset angle, radius frac, size, color BGR)
-        meat_blobs = [
-            (0.0,   0.18,  145, 105,  (68, 82, 188)),   # large pink center-left
-            (2.1,   0.32,  120,  88,  (55, 70, 172)),   # large darker right
-            (4.4,   0.22,  100,  75,  (78, 95, 200)),   # medium lighter bottom
-        ]
-        for base_ang, r_frac, bw, bh, col in meat_blobs:
+        # ── Meat fill: base + 2 large ellipses rotating with mix_angle ────────
+        # Base meat fill covering full interior
+        cv2.ellipse(frame, (cx, cy + 8), (rx - 28, ry - 20), 0, 0, 360, (68, 82, 188), -1)
+        # Two large overlapping blobs with slight offset (rotate with mix)
+        for base_ang, r_frac, bw, bh, col in [
+            (0.0, 0.28, rx - 60, ry - 45, (55, 70, 172)),
+            (2.6, 0.22, rx - 80, ry - 55, (78, 95, 200)),
+        ]:
             a  = base_ang + mix
             r  = r_frac * (rx - 20)
             fx = int(cx + math.cos(a) * r)
-            fy = int(cy + math.sin(a) * r * 0.76 + 10)
-            br = int(math.degrees(a))
-            cv2.ellipse(frame, (fx, fy), (bw, bh), br, 0, 360, col, -1)
+            fy = int(cy + math.sin(a) * r * 0.76 + 8)
+            cv2.ellipse(frame, (fx, fy), (bw, bh), int(math.degrees(a)), 0, 360, col, -1)
 
         # ── Golden onion blob (appears after pour, orbits & mixes) ───────────
         if sub in ('arrows', 'rotate'):
-            # Onion center slowly migrates as mix_angle changes
             ocx = cx + int(58 * math.cos(mix * 0.7 + 0.8))
             ocy = cy + int(42 * math.sin(mix * 0.7 + 0.8) * 0.76) + 10
             for i in range(len(self._kn_onion_r)):
-                a  = float(self._kn_onion_ang[i]) + mix * 1.1
-                r  = float(self._kn_onion_r[i])
-                fx = int(ocx + math.cos(a) * r)
-                fy = int(ocy + math.sin(a) * r * 0.82)
-                bw = int(self._kn_onion_w[i])
-                bh = int(self._kn_onion_h[i])
-                br = int(math.degrees(float(self._kn_onion_rot[i]) + mix))
+                a   = float(self._kn_onion_ang[i]) + mix * 1.1
+                r   = float(self._kn_onion_r[i])
+                fx  = int(ocx + math.cos(a) * r)
+                fy  = int(ocy + math.sin(a) * r * 0.82)
+                bw  = int(self._kn_onion_w[i])
+                bh  = int(self._kn_onion_h[i])
+                br  = int(math.degrees(float(self._kn_onion_rot[i]) + mix))
                 col = tuple(int(c) for c in self._kn_onion_col[i])
                 cv2.ellipse(frame, (fx, fy), (bw, bh), br, 0, 360, col, -1)
 
-        # ── Bowl rim on top (hides overflowing blobs) ─────────────────────────
-        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 180, (230, 215, 185), 28)
-        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 180, (252, 245, 230), 4)
-        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 180, 360, (175, 162, 135), 3)
+        # ── Bowl rim drawn LAST as thin outline only (no thick cover) ─────────
+        # Clip any overflow by redrawing the outer wall ring on top
+        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 360, (230, 215, 185), 22)
+        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 360, (252, 245, 230), 3)
+        cv2.ellipse(frame, (cx, cy), (rx - 20, ry - 15), 0, 0, 360, (215, 200, 168), 3)
 
         # ── Pour onion sub-phase ──────────────────────────────────────────────
         if sub == 'pour_onion':

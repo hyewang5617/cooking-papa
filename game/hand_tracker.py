@@ -18,7 +18,7 @@ MODEL_URL  = (
 )
 
 PROC_W, PROC_H = 640, 360
-GRIP_THRESHOLD = 0.17
+GRIP_THRESHOLD = 0.16
 PALM_REAL_M    = 0.085
 Z_REF_M        = 0.55
 UNITY_SCALE    = 9.0
@@ -83,7 +83,9 @@ def _calc_grip(lms):
     avg_dist = sum(
         math.sqrt((lms[t].x - palm_x)**2 + (lms[t].y - palm_y)**2) for t in TIP_IDS
     ) / 4
-    return (curl >= 3) and (avg_dist < GRIP_THRESHOLD), round(avg_dist, 4)
+    # Full fist (all 4 fingers curled) → always grip regardless of distance
+    gripped = (curl >= 4) or (curl >= 3 and avg_dist < GRIP_THRESHOLD)
+    return gripped, round(avg_dist, 4)
 
 
 def _world_to_screen(wx, wy, W=1280, H=720):
@@ -162,7 +164,7 @@ class HandTracker:
         options = vision.HandLandmarkerOptions(
             base_options=base,
             running_mode=vision.RunningMode.LIVE_STREAM,
-            num_hands=2,
+            num_hands=1,
             min_hand_detection_confidence=0.7,
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
