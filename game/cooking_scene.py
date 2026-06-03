@@ -28,9 +28,9 @@ GRAB_RADIUS  = 130   # px proximity to grab
 
 # ── Stage 1 – Cutting  (objects in center of screen, y ≈ 400-440) ─────────────
 S1_BOARD_X  = 190
-S1_BOARD_Y  = 342
+S1_BOARD_Y  = 336
 S1_BOARD_W  = 880
-S1_BOARD_H  = 168
+S1_BOARD_H  = 252
 S1_KNIFE_X  = 278
 S1_KNIFE_Y  = 426
 S1_VEG_Y    = 426
@@ -106,7 +106,7 @@ class CookingScene(BaseMiniGame):
         self._trail     = []
         self._anim_pan  = 0
 
-        self._knife_spr   = get_knife(size=130)
+        self._knife_spr   = get_knife(size=195)
         self._spatula_spr = get_spatula(size=120)
         self._bowl_spr    = get_bowl(w=260, h=130)
 
@@ -474,7 +474,7 @@ class CookingScene(BaseMiniGame):
                     _grab_ring(frame, [vx, S1_VEG_Y], label='CHOP')
 
         overlay(frame, self._knife_spr,
-                self._knife_pos[0], self._knife_pos[1], size=130)
+                self._knife_pos[0], self._knife_pos[1], size=195)
         if self._phase == 'grab_knife':
             _grab_ring(frame, self._knife_pos)
 

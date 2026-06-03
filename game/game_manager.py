@@ -215,7 +215,7 @@ class GameManager:
             'RANKING':    self._ranking,
         }.get(self.state, lambda f: f)(bg)
 
-        draw_avatars(output, self.hand_states, scale=0.2)
+        draw_avatars(output, self.hand_states, scale=0.5)
 
         return output
 
