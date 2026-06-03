@@ -21,6 +21,7 @@ STIR_TARGET  = 3
 FLIP_TARGET  = 2
 
 CHOP_PIXELS  = 55    # screen-pixel travel needed per chop stroke
+CHOP_RANGE   = 90    # px — knife center must be within this of the target vegetable
 FLIP_PIXELS  = 18    # screen-pixel upward jump per frame to trigger flip
 STIR_MIN_R   = 0.40  # world-unit min radius for stir detection
 GRAB_RADIUS  = 130   # px proximity to grab
@@ -263,14 +264,26 @@ class CookingScene(BaseMiniGame):
         elif self._held_tool == 'pan':     self._pan_pos     = [hand.screen_x, hand.screen_y]
 
     def _do_chop(self, hand):
-        """Screen-pixel based chop detection — counts each direction reversal."""
+        """Screen-pixel based chop detection — only counts when knife is over target veg."""
         if self._cooldown > 0:
             self._cooldown -= 1
             return []
 
+        # Determine which vegetable is the current target
+        if self.chops < S1_VEG_CHOP_OFFSET[1]:    vi = 0  # carrot
+        elif self.chops < S1_VEG_CHOP_OFFSET[2]:  vi = 1  # cucumber
+        else:                                       vi = 2  # pepper
+
+        # Knife (= hand) must be within CHOP_RANGE of the target vegetable's x
+        if abs(hand.screen_x - S1_VEG_XS[vi]) > CHOP_RANGE:
+            # Reset tracking so direction history doesn't carry over
+            self._chop_ref_y = None
+            self._chop_dir   = None
+            return []
+
         sy = hand.screen_y
 
-        # Initialise reference on first call
+        # Initialise reference on first call (or after re-entering zone)
         if self._chop_ref_y is None:
             self._chop_ref_y = sy
             return []
@@ -440,7 +453,7 @@ class CookingScene(BaseMiniGame):
             # Horizontal cut marks before the final split
             n_cuts = min(
                 max(self.chops - S1_VEG_CHOP_OFFSET[vi], 0),
-                S1_VEG_CHOP_MAX[vi] - 1   # last cut shows as split, not a line
+                S1_VEG_CHOP_MAX[vi] - 1
             )
             for c in range(n_cuts):
                 offset_y = int((c - (n_cuts - 1) / 2.0) * 18)
@@ -449,6 +462,14 @@ class CookingScene(BaseMiniGame):
                          (210, 235, 255), 2, cv2.LINE_AA)
                 cv2.circle(frame, (vx - 50, cut_y), 2, (190, 220, 255), -1)
                 cv2.circle(frame, (vx + 50, cut_y), 2, (190, 220, 255), -1)
+
+            # Pulsing target ring on the current active vegetable during chopping
+            if self._phase == 'chopping':
+                if self.chops < S1_VEG_CHOP_OFFSET[1]:   tvi = 0
+                elif self.chops < S1_VEG_CHOP_OFFSET[2]: tvi = 1
+                else:                                      tvi = 2
+                if vi == tvi:
+                    _grab_ring(frame, [vx, S1_VEG_Y])
 
         overlay(frame, self._knife_spr,
                 self._knife_pos[0], self._knife_pos[1], size=130)
