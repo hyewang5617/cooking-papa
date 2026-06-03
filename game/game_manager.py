@@ -203,6 +203,11 @@ class GameManager:
     def update(self, frame):
         self.tracker.process(frame)          # hand tracking uses real camera frame
         self.hand_states = self.tracker.get_hand_states()
+        # Switch num_hands based on current stage requirement
+        if self.game and hasattr(self.game, 'required_hands'):
+            req = self.game.required_hands
+            if req != self.tracker.num_hands:
+                self.tracker.set_num_hands(req)
 
         h, w = frame.shape[:2]
         bg = get_kitchen_bg(w, h).copy()     # kitchen background for display

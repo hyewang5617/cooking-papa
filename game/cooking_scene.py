@@ -102,6 +102,16 @@ _KN_SWIPE_PX  = 85     # pixels needed for a valid swipe
 _KN_ARROW_N   = 7
 _KN_DIRS      = ('up', 'down', 'left', 'right')
 
+# ── Toss Meat ────────────────────────────────────────────────────────────────
+_TOSS_L_X      = 185    # left catch zone center x
+_TOSS_R_X      = 1095   # right catch zone center x
+_TOSS_Y        = 370    # ball flight y center
+_TOSS_BALL_R   = 72     # ball base radius
+_TOSS_ZONE_R   = 140    # catch zone radius
+_TOSS_SPEED    = 10     # pixels per frame
+_TOSS_SWIPE_PX = 22     # screen px/frame to count as swipe
+_TOSS_TARGET   = 6      # catches needed
+
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
 S2_POT_Y   = 390
@@ -132,6 +142,7 @@ _PHASE_HINTS = {
     'onion_fry':        ('Stir  then  turn  off  flame!', (0, 230, 160)),
     'meat_mix':         ('Grab  beef  →  drop  in  grinder!', (100, 180, 255)),
     'knead':            ('Knead  the  meat!',              (180, 140, 255)),
+    'toss_meat':        ('Swipe  opposite  to  catch!',   (80, 220, 255)),
     'grab_spatula':     ('GRAB the spatula!',           (0, 200, 255)),
     'stirring':         ('Stir in CIRCLES!',        (0, 255, 180)),
     'grab_pan':         ('GRAB the pan!',           (0, 200, 255)),
@@ -232,6 +243,15 @@ class CookingScene(BaseMiniGame):
         self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
         self._fry_spatula_hand = -1
 
+        # Toss meat state
+        self._toss_ball_x   = float(_TOSS_L_X + (_TOSS_R_X - _TOSS_L_X) // 2)
+        self._toss_ball_vx  = float(_TOSS_SPEED)
+        self._toss_count    = 0
+        self._toss_flat     = 0.0
+        self._toss_anim     = 0
+        self._toss_catch_cd = 0
+        self._toss_prev_sx  = {}   # {hand_idx: prev_screen_x}
+
         # Knead state
         self._knead_sub           = 'pour_onion'
         self._knead_onion_x       = float(_KN_ONION_X)
@@ -266,6 +286,10 @@ class CookingScene(BaseMiniGame):
         return self._phase == 'complete'
 
     @property
+    def required_hands(self):
+        return 2 if self._phase == 'toss_meat' else 1
+
+    @property
     def progress_text(self):
         p = self._phase
         if p == 'place_onion':  return 'Step 1  —  Place the onion!'
@@ -287,6 +311,7 @@ class CookingScene(BaseMiniGame):
             if sub == 'pour_onion': return 'Pour  in  the  onions!'
             if sub == 'arrows':     return f'Knead  {self._knead_idx}/{_KN_ARROW_N}'
             return 'One  full  turn!'
+        if p == 'toss_meat':        return f'Toss  {self._toss_count}/{_TOSS_TARGET}'
         if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
         if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
         if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
@@ -337,6 +362,9 @@ class CookingScene(BaseMiniGame):
 
         elif p == 'knead':
             events += self._do_knead(hands)
+
+        elif p == 'toss_meat':
+            events += self._do_toss_meat(hands)
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -572,6 +600,8 @@ class CookingScene(BaseMiniGame):
             self._draw_meat_mix(frame)
         elif p == 'knead':
             self._draw_knead(frame)
+        elif p == 'toss_meat':
+            self._draw_toss_meat(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
         else:
@@ -823,6 +853,31 @@ class CookingScene(BaseMiniGame):
                 dx = int(_KN_BOWL_CX + r * math.cos(t * 2.2))
                 dy = int(_KN_BOWL_CY + r * math.sin(t * 2.2))
                 _demo_fist(frame, dx, dy, openness=0.0)
+
+        elif p == 'toss_meat':
+            # Show both hands: one on each side, swipe at the right time
+            going_right = self._toss_ball_vx > 0
+            at_right    = self._toss_ball_x >= _TOSS_R_X - 90
+            at_left     = self._toss_ball_x <= _TOSS_L_X + 90
+
+            # Left demo hand
+            if at_left:
+                # Ball arrived: swipe RIGHT
+                wave = math.sin(t * 8)
+                off  = int(50 * wave)
+                _demo_fist(frame, _TOSS_L_X + off, _TOSS_Y, openness=0.0)
+            else:
+                # Waiting: gentle hover
+                _demo_fist(frame, _TOSS_L_X, _TOSS_Y + int(12 * math.sin(t * 2)), openness=0.3)
+
+            # Right demo hand
+            if at_right:
+                # Ball arrived: swipe LEFT
+                wave = math.sin(t * 8)
+                off  = int(50 * wave)
+                _demo_fist(frame, _TOSS_R_X - off, _TOSS_Y, openness=0.0)
+            else:
+                _demo_fist(frame, _TOSS_R_X, _TOSS_Y + int(12 * math.sin(t * 2 + 1)), openness=0.3)
 
         elif p == 'stirring':
             # Fist orbiting the pot clockwise
@@ -1296,6 +1351,155 @@ class CookingScene(BaseMiniGame):
                          _GR_HANDLE_CX, _GR_HANDLE_CY + _GR_HANDLE_ARM + 50,
                          1.0, (255, 230, 100), 2, center=True)
 
+    # ── Toss Meat ────────────────────────────────────────────────────────────
+
+    def _init_toss_meat(self):
+        cx = (_TOSS_L_X + _TOSS_R_X) // 2
+        self._toss_ball_x   = float(cx)
+        self._toss_ball_vx  = float(_TOSS_SPEED)
+        self._toss_count    = 0
+        self._toss_flat     = 0.0
+        self._toss_anim     = 0
+        self._toss_catch_cd = 0
+        self._toss_prev_sx  = {}
+
+    def _do_toss_meat(self, hands):
+        if self._toss_catch_cd > 0:
+            self._toss_catch_cd -= 1
+        if self._toss_anim > 0:
+            self._toss_anim -= 1
+
+        self._toss_ball_x += self._toss_ball_vx
+
+        # Bounce at boundaries
+        if self._toss_ball_x >= _TOSS_R_X:
+            self._toss_ball_x = float(_TOSS_R_X)
+            self._toss_ball_vx = -abs(self._toss_ball_vx)
+        elif self._toss_ball_x <= _TOSS_L_X:
+            self._toss_ball_x = float(_TOSS_L_X)
+            self._toss_ball_vx = abs(self._toss_ball_vx)
+
+        at_right = self._toss_ball_x >= _TOSS_R_X - 90
+        at_left  = self._toss_ball_x <= _TOSS_L_X + 90
+
+        if (at_right or at_left) and self._toss_catch_cd == 0:
+            for i, hand in enumerate(hands):
+                if not hand.detected or not hand.gripped:
+                    self._toss_prev_sx.pop(i, None)
+                    continue
+                hx = hand.screen_x
+                prev = self._toss_prev_sx.get(i, hx)
+                self._toss_prev_sx[i] = hx
+                dvx = hx - prev  # screen px per frame
+
+                in_zone = (at_right and hx > 880) or (at_left and hx < 400)
+                if not in_zone:
+                    continue
+                # Correct swipe: opposite direction to ball travel
+                swipe_ok = (at_right and dvx < -_TOSS_SWIPE_PX) or \
+                           (at_left  and dvx >  _TOSS_SWIPE_PX)
+                if swipe_ok:
+                    self._toss_count   += 1
+                    self._toss_flat     = min(self._toss_count / _TOSS_TARGET, 1.0)
+                    self._toss_anim     = 20
+                    self._toss_catch_cd = 28
+                    self._flash_event('CATCH!', (80, 230, 120), 12)
+                    if self._toss_count >= _TOSS_TARGET:
+                        self._phase = 'grab_spatula'
+                        return ['toss']
+                    break
+        else:
+            for i, hand in enumerate(hands):
+                if hand.detected:
+                    self._toss_prev_sx[i] = hand.screen_x
+
+        return []
+
+    def _draw_toss_meat(self, frame):
+        t  = time.time()
+        fh, fw = frame.shape[:2]
+
+        # Which side is ball heading toward?
+        going_right  = self._toss_ball_vx > 0
+        at_right     = self._toss_ball_x >= _TOSS_R_X - 90
+        at_left      = self._toss_ball_x <= _TOSS_L_X + 90
+        active_left  = not going_right  # ball heading left → left zone is active
+        active_right = going_right
+
+        # ── Zone circles ─────────────────────────────────────────────────────
+        for zx, is_active, swipe_dir_lbl, arrow_dir in [
+            (_TOSS_L_X,  active_left,  '-->',  1),
+            (_TOSS_R_X,  active_right, '<--', -1),
+        ]:
+            # Brighter ring when ball is heading this way
+            pulse     = int(10 * abs(math.sin(t * 5))) if is_active else 0
+            ring_col  = (80, 220, 255) if is_active else (60, 80, 110)
+            ring_thick = 3 if is_active else 1
+            cv2.circle(frame, (zx, _TOSS_Y), _TOSS_ZONE_R + pulse, ring_col, ring_thick)
+
+            # "Place hand here" label
+            place_col = (80, 220, 255) if is_active else (100, 120, 150)
+            _shadow_text(frame, 'Place hand here', zx, _TOSS_Y + _TOSS_ZONE_R + 28,
+                         0.55, place_col, 1, center=True)
+
+            # Swipe direction arrow — large and obvious when active
+            if is_active:
+                arrow_pulse = int(8 * abs(math.sin(t * 6)))
+                ay = _TOSS_Y
+                ax1 = zx - arrow_dir * (60 + arrow_pulse)
+                ax2 = zx + arrow_dir * (60 + arrow_pulse)
+                cv2.arrowedLine(frame, (ax1, ay), (ax2, ay),
+                                (80, 255, 130), 5, tipLength=0.28)
+                _shadow_text(frame, f'SWIPE  {swipe_dir_lbl}',
+                             zx, _TOSS_Y - _TOSS_ZONE_R - 22,
+                             0.75, (80, 255, 130), 2, center=True)
+            else:
+                # Dim static arrow hint
+                cv2.arrowedLine(frame,
+                                (zx - arrow_dir * 40, _TOSS_Y),
+                                (zx + arrow_dir * 40, _TOSS_Y),
+                                (70, 90, 110), 2, tipLength=0.25)
+
+        # ── Ball position with parabolic arc ─────────────────────────────────
+        span   = float(_TOSS_R_X - _TOSS_L_X)
+        t_pos  = (self._toss_ball_x - _TOSS_L_X) / span
+        arc_h  = 110
+        ball_y = int(_TOSS_Y - arc_h * 4 * t_pos * (1 - t_pos))
+        bx     = int(self._toss_ball_x)
+
+        # ── Shape ─────────────────────────────────────────────────────────────
+        f      = self._toss_flat
+        semi_a = int(_TOSS_BALL_R * (1 + f * 1.3))
+        semi_b = int(max(8, _TOSS_BALL_R * (1 - f * 0.88)))
+        if self._toss_anim > 0:
+            sq     = self._toss_anim / 20
+            semi_a = int(semi_a * (1 + sq * 0.35))
+            semi_b = int(max(6, semi_b * (1 - sq * 0.25)))
+
+        meat_col = (68, 85, 190)
+        cv2.ellipse(frame, (bx + 4, ball_y + 5), (semi_a + 4, semi_b + 4),
+                    0, 0, 360, (20, 25, 80), -1)
+        cv2.ellipse(frame, (bx, ball_y), (semi_a, semi_b), 0, 0, 360, meat_col, -1)
+        cv2.ellipse(frame, (bx - semi_a//4, ball_y - semi_b//3),
+                    (max(4, semi_a//3), max(3, semi_b//3)), 0, 0, 360, (110, 128, 225), -1)
+        cv2.ellipse(frame, (bx, ball_y), (semi_a, semi_b), 0, 0, 360, (45, 55, 140), 2)
+
+        # Shape progress label
+        if f > 0.05:
+            lbl = 'PATTY!' if f >= 0.99 else f'Flat: {int(f*100)}%'
+            _shadow_text(frame, lbl, bx, ball_y - semi_b - 30,
+                         0.65, (255, 220, 80), 1, center=True)
+
+        # ── Top instruction banner ────────────────────────────────────────────
+        _panel(frame, 0, 0, fw, 52)
+        _shadow_text(frame,
+                     'Grip + Swipe OPPOSITE direction when ball arrives!',
+                     fw // 2, 30, 0.72, (220, 220, 240), 1, center=True)
+
+        # Catch counter
+        _shadow_text(frame, f'Catch: {self._toss_count} / {_TOSS_TARGET}',
+                     fw // 2, fh - 35, 1.0, (255, 230, 100), 2, center=True)
+
     # ── Knead Stage ──────────────────────────────────────────────────────────
 
     def _init_knead(self):
@@ -1420,7 +1624,8 @@ class CookingScene(BaseMiniGame):
                     self._knead_mix_angle  += delta * 0.8
                 if self._knead_rot_total >= 2 * math.pi:
                     self._knead_prev_ang = None
-                    self._phase = 'grab_spatula'
+                    self._phase = 'toss_meat'
+                    self._init_toss_meat()
                     return ['knead']
             self._knead_prev_ang = angle
         return []

@@ -152,25 +152,42 @@ class _VelocityTracker:
 class HandTracker:
     def __init__(self):
         _ensure_model()
-        self._shared   = _SharedResult()
-        self._trackers = [_VelocityTracker(), _VelocityTracker()]
-        self._states: list = []   # List[HandState], length 0-2
-        self._last_ts  = 0
+        self._shared    = _SharedResult()
+        self._trackers  = [_VelocityTracker(), _VelocityTracker()]
+        self._states: list = []
+        self._last_ts   = 0
+        self._num_hands = 1
+        self._init_landmarker()
 
-        def _on_result(result, output_image, timestamp_ms):
-            self._shared.set(result)
+    def _on_result(self, result, output_image, timestamp_ms):
+        self._shared.set(result)
 
+    def _init_landmarker(self):
         base = mp_tasks.BaseOptions(model_asset_path=MODEL_PATH)
         options = vision.HandLandmarkerOptions(
             base_options=base,
             running_mode=vision.RunningMode.LIVE_STREAM,
-            num_hands=1,
+            num_hands=self._num_hands,
             min_hand_detection_confidence=0.7,
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
-            result_callback=_on_result,
+            result_callback=self._on_result,
         )
         self._landmarker = vision.HandLandmarker.create_from_options(options)
+
+    @property
+    def num_hands(self):
+        return self._num_hands
+
+    def set_num_hands(self, n):
+        if n == self._num_hands:
+            return
+        self._landmarker.close()
+        self._num_hands = n
+        self._trackers  = [_VelocityTracker() for _ in range(max(n, 2))]
+        self._states    = []
+        self._last_ts   = 0
+        self._init_landmarker()
 
     def process(self, frame):
         """Send frame to MediaPipe async; update internal hand states if result ready."""
