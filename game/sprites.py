@@ -58,6 +58,27 @@ def get_pepper_slice(size=120):
     return _cache[key]
 
 
+def get_pepper_whole(size=120):
+    key = ('pepper_whole', size)
+    if key not in _cache:
+        _cache[key] = _make_pepper_whole(size)
+    return _cache[key]
+
+
+def get_pepper_half_left(size=120):
+    key = ('pepper_half_l', size)
+    if key not in _cache:
+        _cache[key] = _make_pepper_half(size, left=True)
+    return _cache[key]
+
+
+def get_pepper_half_right(size=120):
+    key = ('pepper_half_r', size)
+    if key not in _cache:
+        _cache[key] = _make_pepper_half(size, left=False)
+    return _cache[key]
+
+
 # ── Sprite loading ────────────────────────────────────────────────────────────
 
 def _make_knife(size):
@@ -124,6 +145,93 @@ def _load_tomato(size):
     tomato[:, :, 3] = cv2.bitwise_not(dark)
 
     return cv2.resize(tomato, (size, size))
+
+
+def _pepper_poly(cx, cy, r):
+    """Generate bell-pepper outline: 4-lobe polygon using cosine modulation."""
+    pts = []
+    for deg in range(0, 360, 2):
+        a  = math.radians(deg)
+        rr = r * (1.0 + 0.12 * math.cos(4 * a + math.pi / 4))
+        pts.append((int(cx + math.cos(a) * rr), int(cy + math.sin(a) * rr)))
+    return np.array(pts, dtype=np.int32)
+
+
+def _make_pepper_whole(size):
+    """Whole red bell pepper, top-down view."""
+    img = np.zeros((size, size, 4), dtype=np.uint8)
+    cx  = size // 2
+    cy  = int(size * 0.54)
+    r   = int(size * 0.33)
+
+    DARK  = (10,  14, 148, 255)
+    RED   = (35,  50, 220, 255)
+    LITE  = (58,  80, 238, 255)
+    GRN   = (30, 140,  45, 255)
+    DKGRN = (15,  80,  25, 255)
+
+    # Dark outline (slightly inflated polygon)
+    cv2.fillPoly(img, [_pepper_poly(cx, cy, r + 3)], DARK)
+    # Main red fill
+    cv2.fillPoly(img, [_pepper_poly(cx, cy, r)],     RED)
+    # Brighter highlight on upper portion (3D curve illusion)
+    cv2.fillPoly(img, [_pepper_poly(cx, cy - int(r * 0.18), int(r * 0.68))], LITE)
+
+    # Stem
+    sw   = max(4, int(size * 0.08))
+    syb  = cy - r + int(r * 0.05)
+    syt  = syb - int(size * 0.17)
+    cv2.rectangle(img, (cx - sw // 2, syt), (cx + sw // 2, syb), GRN,   -1)
+    cv2.rectangle(img, (cx - sw // 2, syt), (cx + sw // 2, syb), DKGRN,  2)
+
+    # Calyx (5 small petals around stem base)
+    for i in range(5):
+        a  = math.radians(i * 72)
+        lx = int(cx + math.cos(a) * r * 0.44)
+        ly = int(syb + math.sin(a) * r * 0.22)
+        cv2.line(img, (cx, syb), (lx, ly), GRN, 2)
+
+    # Gloss highlight
+    cv2.ellipse(img,
+                (cx - int(r * 0.27), cy - int(r * 0.30)),
+                (int(r * 0.23), int(r * 0.14)), -25, 0, 360,
+                (130, 130, 255, 140), -1)
+    return img
+
+
+def _make_pepper_half(size, left=True):
+    """Half of a bell pepper after a vertical (left / right) cut."""
+    img  = _make_pepper_whole(size)
+    cx   = size // 2
+    cy   = int(size * 0.54)
+    r    = int(size * 0.33)
+
+    # Mask out the unwanted half
+    if left:
+        img[:, cx + 1:, 3] = 0
+    else:
+        img[:, :cx,     3] = 0
+
+    # ── Cut face: thin strip at the cut edge showing interior ────────────────
+    face_ry = int(r * 0.80)
+    face_t  = 10
+
+    # Red pepper wall
+    cv2.rectangle(img,
+                  (cx - face_t // 2,     cy - face_ry),
+                  (cx + face_t // 2,     cy + face_ry),
+                  (10, 14, 148, 255), -1)
+    # Cream interior cavity
+    cv2.rectangle(img,
+                  (cx - face_t // 2 + 2, cy - int(face_ry * 0.86)),
+                  (cx + face_t // 2 - 2, cy + int(face_ry * 0.86)),
+                  (185, 245, 245, 255), -1)
+    # Seeds (3 white dots)
+    for i in range(3):
+        sy_s = int(cy + (i - 1) * face_ry * 0.36)
+        cv2.circle(img, (cx, sy_s), max(2, int(r * 0.057)), (215, 245, 255, 255), -1)
+
+    return img
 
 
 def _make_carrot_slice(size):

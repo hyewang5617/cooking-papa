@@ -11,7 +11,8 @@ import numpy as np
 
 from .minigames.base import BaseMiniGame
 from .sprites import (get_knife, get_spatula, get_bowl, overlay,
-                      get_carrot_slice, get_cucumber_slice, get_pepper_slice)
+                      get_carrot_slice, get_cucumber_slice,
+                      get_pepper_whole, get_pepper_half_left, get_pepper_half_right)
 
 # ── Task targets ──────────────────────────────────────────────────────────────
 CHOP_TARGET  = 5
@@ -54,13 +55,14 @@ _COUNTER_Y  = 340    # kitchen counter line (fixed, not % of height)
 
 # ── Phase hints ───────────────────────────────────────────────────────────────
 _PHASE_HINTS = {
-    'grab_knife':   ('GRAB the knife!',        (0, 200, 255)),
-    'chopping':     ('Chop  UP  and  DOWN!',   (0, 255, 180)),
-    'grab_spatula': ('GRAB the spatula!',       (0, 200, 255)),
-    'stirring':     ('Stir in CIRCLES!',        (0, 255, 180)),
-    'grab_pan':     ('GRAB the pan!',           (0, 200, 255)),
-    'flipping':     ('Flick hand UP quickly!',  (50, 200, 255)),
-    'complete':     ('ALL DONE!',               (0, 255, 100)),
+    'grab_knife':       ('GRAB the knife!',        (0, 200, 255)),
+    'chopping':         ('Chop  UP  and  DOWN!',   (0, 255, 180)),
+    'pepper_splitting': ('',                        (0, 255, 100)),
+    'grab_spatula':     ('GRAB the spatula!',       (0, 200, 255)),
+    'stirring':         ('Stir in CIRCLES!',        (0, 255, 180)),
+    'grab_pan':         ('GRAB the pan!',           (0, 200, 255)),
+    'flipping':         ('Flick hand UP quickly!',  (50, 200, 255)),
+    'complete':         ('ALL DONE!',               (0, 255, 100)),
 }
 
 
@@ -101,14 +103,17 @@ class CookingScene(BaseMiniGame):
         self._trail     = []
         self._anim_pan  = 0
 
-        self._knife_spr   = get_knife(size=130)
-        self._spatula_spr = get_spatula(size=120)
-        self._bowl_spr    = get_bowl(w=260, h=130)
-        self._veg_sprs    = [
+        self._knife_spr       = get_knife(size=130)
+        self._spatula_spr     = get_spatula(size=120)
+        self._bowl_spr        = get_bowl(w=260, h=130)
+        self._veg_sprs        = [
             get_carrot_slice(size=120),
             get_cucumber_slice(size=120),
-            get_pepper_slice(size=120),
+            get_pepper_whole(size=120),
         ]
+        self._pepper_half_l   = get_pepper_half_left(size=120)
+        self._pepper_half_r   = get_pepper_half_right(size=120)
+        self._pepper_split_t  = None   # None = not started; float = start time
 
     # ── BaseMiniGame interface ────────────────────────────────────────────────
 
@@ -119,12 +124,13 @@ class CookingScene(BaseMiniGame):
     @property
     def progress_text(self):
         p = self._phase
-        if p == 'grab_knife':   return 'Step 1/3  —  Grab the knife!'
-        if p == 'chopping':     return f'Step 1/3  —  Chop  {self.chops}/{CHOP_TARGET}'
-        if p == 'grab_spatula': return 'Step 2/3  —  Grab the spatula!'
-        if p == 'stirring':     return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
-        if p == 'grab_pan':     return 'Step 3/3  —  Grab the pan!'
-        if p == 'flipping':     return f'Step 3/3  —  Flip  {self.flips}/{FLIP_TARGET}'
+        if p == 'grab_knife':       return 'Step 1/3  —  Grab the knife!'
+        if p == 'chopping':         return f'Step 1/3  —  Chop  {self.chops}/{CHOP_TARGET}'
+        if p == 'pepper_splitting': return 'Step 1/3  —  Nice cut!'
+        if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
+        if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
+        if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
+        if p == 'flipping':         return f'Step 3/3  —  Flip  {self.flips}/{FLIP_TARGET}'
         return 'ALL DONE!'
 
     def update(self, hands):
@@ -154,6 +160,11 @@ class CookingScene(BaseMiniGame):
             else:
                 self._chop_ref_y = None
                 self._chop_dir   = None
+
+        elif p == 'pepper_splitting':
+            # Wait for the split animation to finish, then move to stage 2
+            if self._pepper_split_t is not None and time.time() - self._pepper_split_t > 0.55:
+                self._phase = 'grab_spatula'
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -280,12 +291,13 @@ class CookingScene(BaseMiniGame):
             self._cooldown = 6
             self._flash_event('CHOP!', (0, 255, 200), 12)
             if self.chops >= CHOP_TARGET:
-                self._held_tool  = None
-                self._held_by    = -1
-                self._phase      = 'grab_spatula'
-                self._knife_pos  = [S1_KNIFE_X, S1_KNIFE_Y]
-                self._chop_ref_y = None
-                self._chop_dir   = None
+                self._held_tool      = None
+                self._held_by        = -1
+                self._phase          = 'pepper_splitting'
+                self._knife_pos      = [S1_KNIFE_X, S1_KNIFE_Y]
+                self._chop_ref_y     = None
+                self._chop_dir       = None
+                self._pepper_split_t = time.time()
             return ['cut']
         return []
 
@@ -356,7 +368,7 @@ class CookingScene(BaseMiniGame):
         _draw_counter(frame, w, h)
 
         p = self._phase
-        if p in ('grab_knife', 'chopping'):
+        if p in ('grab_knife', 'chopping', 'pepper_splitting'):
             self._draw_stage1(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
@@ -390,6 +402,17 @@ class CookingScene(BaseMiniGame):
 
         # Draw 3 vegetables; each gets cut marks as chops accumulate
         for vi, (spr, vx) in enumerate(zip(self._veg_sprs, S1_VEG_XS)):
+            # ── Pepper (vi=2): whole → split animation ───────────────────────
+            if vi == 2 and self._pepper_split_t is not None:
+                elapsed = time.time() - self._pepper_split_t
+                raw_t   = min(elapsed / 0.45, 1.0)
+                # Smooth-step easing
+                t      = raw_t * raw_t * (3.0 - 2.0 * raw_t)
+                offset = int(t * 52)
+                overlay(frame, self._pepper_half_l, vx - offset, S1_VEG_Y, size=115)
+                overlay(frame, self._pepper_half_r, vx + offset, S1_VEG_Y, size=115)
+                continue
+
             overlay(frame, spr, vx, S1_VEG_Y, size=115)
 
             # How many horizontal cut lines to show on this vegetable
@@ -398,12 +421,10 @@ class CookingScene(BaseMiniGame):
                 S1_VEG_CHOP_MAX[vi]
             )
             for c in range(n_cuts):
-                # Evenly spaced horizontal cuts across the veggie face
                 offset_y = int((c - (n_cuts - 1) / 2.0) * 18)
                 cut_y    = S1_VEG_Y + offset_y
                 cv2.line(frame, (vx - 50, cut_y), (vx + 50, cut_y),
                          (210, 235, 255), 2, cv2.LINE_AA)
-                # Small end-caps to suggest a real knife cut
                 cv2.circle(frame, (vx - 50, cut_y), 2, (190, 220, 255), -1)
                 cv2.circle(frame, (vx + 50, cut_y), 2, (190, 220, 255), -1)
 
@@ -459,6 +480,9 @@ class CookingScene(BaseMiniGame):
         """Animated guide hand showing the required motion for the current phase."""
         t = time.time()
         p = self._phase
+
+        if p == 'pepper_splitting':
+            return   # let the split animation speak for itself
 
         if p == 'grab_knife':
             # Hand slides in toward knife; open when far, closes as it arrives
