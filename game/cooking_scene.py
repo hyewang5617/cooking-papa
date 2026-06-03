@@ -40,6 +40,19 @@ S1_VEG_SIZE = 230               # sprite display size (2× original 115)
 S1_VEG_CHOP_OFFSET = [0, 2, 4]  # chop index when this veg starts being cut
 S1_VEG_CHOP_MAX    = [2, 2, 1]  # max visible cuts per vegetable
 
+# ── Onion Fry (between Stage 1 and Stage 2) ──────────────────────────────────
+ONION_PAN_CX  = 640
+ONION_PAN_CY  = 385
+ONION_PAN_R   = 295   # outer rim radius
+ONION_AREA_R  = 248   # inner cooking surface
+ONION_COUNT   = 26
+ONION_COOK_DUR = 10.0  # seconds to fully cook
+ONION_READY   = 0.60   # flame button activates at this fraction
+ONION_INFL_R  = 125    # hand influence radius (px)
+_FLAME_BTN_CX = 105
+_FLAME_BTN_CY = 610
+_FLAME_BTN_R  = 55
+
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
 S2_POT_Y   = 390
@@ -60,8 +73,9 @@ _COUNTER_Y  = 340    # kitchen counter line (fixed, not % of height)
 _PHASE_HINTS = {
     'grab_knife':       ('GRAB the knife!',        (0, 200, 255)),
     'chopping':         ('Chop  UP  and  DOWN!',   (0, 255, 180)),
-    'pepper_splitting': ('',                        (0, 255, 100)),
-    'grab_spatula':     ('GRAB the spatula!',       (0, 200, 255)),
+    'pepper_splitting': ('',                            (0, 255, 100)),
+    'onion_fry':        ('Stir  then  turn  off  flame!', (0, 230, 160)),
+    'grab_spatula':     ('GRAB the spatula!',           (0, 200, 255)),
     'stirring':         ('Stir in CIRCLES!',        (0, 255, 180)),
     'grab_pan':         ('GRAB the pan!',           (0, 200, 255)),
     'flipping':         ('Flick hand UP quickly!',  (50, 200, 255)),
@@ -129,6 +143,16 @@ class CookingScene(BaseMiniGame):
         self._split_ts       = [None, None, None]
         self._pepper_split_t = None   # kept for legacy reference in update()
 
+        # Onion fry state
+        self._onion_pos   = None   # (N,2) float
+        self._onion_vel   = None
+        self._onion_ang   = None
+        self._onion_avel  = None
+        self._onion_cook  = 0.0    # 0→1
+        self._onion_start = None
+        self._flame_on    = True
+        self._prev_hand_onion = None
+
     # ── BaseMiniGame interface ────────────────────────────────────────────────
 
     @property
@@ -141,6 +165,11 @@ class CookingScene(BaseMiniGame):
         if p == 'grab_knife':       return 'Step 1/3  —  Grab the knife!'
         if p == 'chopping':         return f'Step 1/3  —  Chop  {self.chops}/{CHOP_TARGET}'
         if p == 'pepper_splitting': return 'Step 1/3  —  Nice cut!'
+        if p == 'onion_fry':
+            pct = int(self._onion_cook * 100)
+            if self._onion_cook < ONION_READY:
+                return f'Frying onions...  {pct}%'
+            return 'Grab the flame button!'
         if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
         if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
         if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
@@ -176,9 +205,12 @@ class CookingScene(BaseMiniGame):
                 self._chop_dir   = None
 
         elif p == 'pepper_splitting':
-            # Wait for the split animation to finish, then move to stage 2
             if self._pepper_split_t is not None and time.time() - self._pepper_split_t > 0.55:
-                self._phase = 'grab_spatula'
+                self._phase = 'onion_fry'
+                self._init_onion()
+
+        elif p == 'onion_fry':
+            self._update_onion_fry(hands)
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -406,6 +438,8 @@ class CookingScene(BaseMiniGame):
         p = self._phase
         if p in ('grab_knife', 'chopping', 'pepper_splitting'):
             self._draw_stage1(frame)
+        elif p == 'onion_fry':
+            self._draw_onion_fry(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
         else:
@@ -526,8 +560,21 @@ class CookingScene(BaseMiniGame):
         t = time.time()
         p = self._phase
 
-        if p == 'pepper_splitting':
-            return   # let the split animation speak for itself
+        if p in ('pepper_splitting', 'onion_fry'):
+            if p == 'onion_fry':
+                if self._onion_cook < ONION_READY:
+                    # Gripped hand stirring in circles around the pan
+                    r  = 165
+                    dx = int(ONION_PAN_CX + r * math.cos(t * 1.6))
+                    dy = int(ONION_PAN_CY + r * math.sin(t * 1.6))
+                    _demo_fist(frame, dx, dy, openness=0.0)
+                else:
+                    # Approach the flame button
+                    wave = (math.sin(t * 1.8) + 1) / 2
+                    off  = int(70 * wave)
+                    _demo_fist(frame, _FLAME_BTN_CX + 120 - off, _FLAME_BTN_CY,
+                               openness=1.0 - wave)
+            return
 
         if p == 'grab_knife':
             # Hand slides in toward knife; open when far, closes as it arrives
@@ -581,6 +628,183 @@ class CookingScene(BaseMiniGame):
                                 (S3_PAN_X - 120, S3_PAN_Y + off + 40),
                                 (S3_PAN_X - 120, S3_PAN_Y + off - 30),
                                 (80, 255, 160), 2, tipLength=0.45)
+
+    # ── Onion Fry methods ────────────────────────────────────────────────────
+
+    def _init_onion(self):
+        rng    = np.random.default_rng(seed=42)
+        radii  = np.sqrt(rng.uniform(0.05, 0.82, ONION_COUNT)) * ONION_AREA_R
+        angles = rng.uniform(0, 2 * np.pi, ONION_COUNT)
+        self._onion_pos  = np.stack([
+            ONION_PAN_CX + np.cos(angles) * radii,
+            ONION_PAN_CY + np.sin(angles) * radii,
+        ], axis=1).astype(float)
+        self._onion_vel  = np.zeros((ONION_COUNT, 2))
+        self._onion_ang  = rng.uniform(0, 2 * np.pi, ONION_COUNT)
+        self._onion_avel = np.zeros(ONION_COUNT)
+        self._onion_cook = 0.0
+        self._onion_start = None
+        self._flame_on    = True
+        self._prev_hand_onion = None
+
+    def _update_onion_fry(self, hands):
+        now = time.time()
+        if self._onion_start is None:
+            self._onion_start = now
+        self._onion_cook = min((now - self._onion_start) / ONION_COOK_DUR, 1.0)
+
+        has_gripped = False
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                continue
+            has_gripped = True
+            hx = float(hand.screen_x)
+            hy = float(hand.screen_y)
+
+            # Flame button: grip over it when ready → done
+            if self._onion_cook >= ONION_READY:
+                bdx = hx - _FLAME_BTN_CX
+                bdy = hy - _FLAME_BTN_CY
+                if bdx * bdx + bdy * bdy < (_FLAME_BTN_R + 22) ** 2:
+                    self._flame_on = False
+                    self._phase    = 'grab_spatula'
+                    return
+
+            # Stir: apply impulse to nearby pieces
+            if self._prev_hand_onion is not None:
+                dhx = (hx - self._prev_hand_onion[0]) * 0.55
+                dhy = (hy - self._prev_hand_onion[1]) * 0.55
+            else:
+                dhx = dhy = 0.0
+            self._prev_hand_onion = (hx, hy)
+
+            if abs(dhx) + abs(dhy) > 0.8:
+                dx   = self._onion_pos[:, 0] - hx
+                dy   = self._onion_pos[:, 1] - hy
+                dist = np.sqrt(dx * dx + dy * dy) + 1e-6
+                mask = dist < ONION_INFL_R
+                if mask.any():
+                    fall = 1.0 - dist[mask] / ONION_INFL_R
+                    self._onion_vel[mask, 0] += dhx * fall
+                    self._onion_vel[mask, 1] += dhy * fall
+                    self._onion_avel[mask]   += np.random.uniform(-0.18, 0.18, mask.sum())
+
+        if not has_gripped:
+            self._prev_hand_onion = None
+
+        # Physics: friction + integrate
+        self._onion_vel  *= 0.88
+        self._onion_avel *= 0.85
+        self._onion_pos  += self._onion_vel
+        self._onion_ang  += self._onion_avel
+
+        # Boundary: reflect at pan inner wall
+        dx   = self._onion_pos[:, 0] - ONION_PAN_CX
+        dy   = self._onion_pos[:, 1] - ONION_PAN_CY
+        dist = np.sqrt(dx * dx + dy * dy) + 1e-6
+        out  = dist > ONION_AREA_R * 0.88
+        if out.any():
+            nx  = dx[out] / dist[out]
+            ny  = dy[out] / dist[out]
+            dot = self._onion_vel[out, 0] * nx + self._onion_vel[out, 1] * ny
+            self._onion_vel[out, 0] -= dot * nx * 1.5
+            self._onion_vel[out, 1] -= dot * ny * 1.5
+            self._onion_pos[out, 0]  = ONION_PAN_CX + nx * ONION_AREA_R * 0.84
+            self._onion_pos[out, 1]  = ONION_PAN_CY + ny * ONION_AREA_R * 0.84
+
+    def _draw_onion_fry(self, frame):
+        t    = time.time()
+        cx   = ONION_PAN_CX
+        cy   = ONION_PAN_CY
+        cook = self._onion_cook
+
+        # ── Stove base ───────────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx, cy + ONION_PAN_R + 22),
+                    (ONION_PAN_R + 50, 42), 0, 0, 360, (52, 48, 44), -1)
+
+        # ── Pan outer rim ────────────────────────────────────────────────────
+        cv2.circle(frame, (cx, cy), ONION_PAN_R, (40, 36, 32), -1)
+        cv2.circle(frame, (cx, cy), ONION_PAN_R, (18, 16, 14), 10)
+
+        # Cooking surface — warms slightly as cook progresses
+        sv = int(162 - cook * 28)
+        cv2.circle(frame, (cx, cy), ONION_AREA_R + 10, (sv, sv + 2, sv + 4), -1)
+        cv2.circle(frame, (cx, cy), ONION_AREA_R + 10, (72, 68, 64), 2)
+
+        # ── Pan handle ───────────────────────────────────────────────────────
+        hx1 = cx + ONION_PAN_R - 14
+        hx2 = cx + ONION_PAN_R + 145
+        cv2.rectangle(frame, (hx1, cy - 26), (hx2, cy + 26), (36, 32, 28), -1)
+        cv2.rectangle(frame, (hx1, cy - 26), (hx2, cy + 26), (18, 15, 12),  3)
+
+        # ── Flames ───────────────────────────────────────────────────────────
+        if self._flame_on:
+            for fi in range(9):
+                fx   = cx - 190 + fi * 48
+                flk  = int(14 * math.sin(t * 9.5 + fi * 1.3))
+                fy0  = cy + ONION_PAN_R + 6
+                # Blue core
+                cv2.ellipse(frame, (fx, fy0),
+                            (7, 16 + flk // 2), 0, 0, 360, (190, 95, 18), -1)
+                # Orange-yellow outer flame
+                pts = np.array([[fx - 11, fy0],
+                                [fx,      fy0 - 44 - flk],
+                                [fx + 11, fy0]], dtype=np.int32)
+                cv2.fillPoly(frame, [pts], (0, int(148 + flk * 3), 255))
+
+        # ── Onion pieces ─────────────────────────────────────────────────────
+        for i in range(ONION_COUNT):
+            px  = int(self._onion_pos[i, 0])
+            py  = int(self._onion_pos[i, 1])
+            ang = float(self._onion_ang[i])
+
+            # BGR colour: cream → light golden → golden brown
+            if cook < 0.5:
+                tc = cook / 0.5
+                col = (int(228 - tc * 158), int(248 - tc * 65), int(255 - tc * 52))
+            else:
+                tc = (cook - 0.5) / 0.5
+                col = (int(70  - tc * 48), int(183 - tc * 135), int(203 - tc * 118))
+
+            pw, ph = 17, 12
+            ca, sa = math.cos(ang), math.sin(ang)
+            corners = np.array([
+                [px + int(-pw*ca + ph*sa), py + int(-pw*sa - ph*ca)],
+                [px + int( pw*ca + ph*sa), py + int( pw*sa - ph*ca)],
+                [px + int( pw*ca - ph*sa), py + int( pw*sa + ph*ca)],
+                [px + int(-pw*ca - ph*sa), py + int(-pw*sa + ph*ca)],
+            ], dtype=np.int32)
+
+            cv2.fillPoly(frame, [corners + 3], (20, 18, 16))   # shadow
+            cv2.fillPoly(frame, [corners], col)
+            dark = tuple(max(0, c - 42) for c in col)
+            cv2.polylines(frame, [corners], True, dark, 1)
+
+        # ── Flame button ─────────────────────────────────────────────────────
+        ready  = cook >= ONION_READY
+        pulse  = int(9 * abs(math.sin(t * 5))) if ready else 0
+        bcol   = (0, 185, 255) if ready else (55, 55, 72)
+        cv2.circle(frame, (_FLAME_BTN_CX, _FLAME_BTN_CY),
+                   _FLAME_BTN_R + pulse, bcol, -1)
+        cv2.circle(frame, (_FLAME_BTN_CX, _FLAME_BTN_CY),
+                   _FLAME_BTN_R + pulse, (255, 255, 255), 2)
+
+        # Flame icon (simple teardrop polygon)
+        fpts = np.array([
+            [_FLAME_BTN_CX,      _FLAME_BTN_CY - 30],
+            [_FLAME_BTN_CX - 16, _FLAME_BTN_CY +  8],
+            [_FLAME_BTN_CX - 8,  _FLAME_BTN_CY + 20],
+            [_FLAME_BTN_CX + 8,  _FLAME_BTN_CY + 20],
+            [_FLAME_BTN_CX + 16, _FLAME_BTN_CY +  8],
+        ], dtype=np.int32)
+        icol = (255, 255, 255) if ready else (110, 110, 130)
+        cv2.fillPoly(frame, [fpts], icol)
+
+        lbl = 'GRAB' if ready else f'{int(cook / ONION_READY * 100)}%'
+        _shadow_text(frame, lbl,
+                     _FLAME_BTN_CX, _FLAME_BTN_CY + _FLAME_BTN_R + 24,
+                     0.62, (255, 255, 255) if ready else (160, 160, 180),
+                     1, center=True)
 
     def _draw_hint(self, frame, w, h):
         p = self._phase
