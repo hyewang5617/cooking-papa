@@ -11,8 +11,9 @@ import numpy as np
 
 from .minigames.base import BaseMiniGame
 from .sprites import (get_knife, get_spatula, get_bowl, overlay,
-                      get_carrot_slice, get_cucumber_slice,
-                      get_pepper_whole, get_pepper_half_left, get_pepper_half_right)
+                      get_carrot_whole,   get_carrot_half_left,   get_carrot_half_right,
+                      get_cucumber_whole, get_cucumber_half_left, get_cucumber_half_right,
+                      get_pepper_whole,   get_pepper_half_left,   get_pepper_half_right)
 
 # ── Task targets ──────────────────────────────────────────────────────────────
 CHOP_TARGET  = 5
@@ -103,17 +104,28 @@ class CookingScene(BaseMiniGame):
         self._trail     = []
         self._anim_pan  = 0
 
-        self._knife_spr       = get_knife(size=130)
-        self._spatula_spr     = get_spatula(size=120)
-        self._bowl_spr        = get_bowl(w=260, h=130)
-        self._veg_sprs        = [
-            get_carrot_slice(size=120),
-            get_cucumber_slice(size=120),
+        self._knife_spr   = get_knife(size=130)
+        self._spatula_spr = get_spatula(size=120)
+        self._bowl_spr    = get_bowl(w=260, h=130)
+
+        self._veg_sprs  = [
+            get_carrot_whole(size=120),
+            get_cucumber_whole(size=120),
             get_pepper_whole(size=120),
         ]
-        self._pepper_half_l   = get_pepper_half_left(size=120)
-        self._pepper_half_r   = get_pepper_half_right(size=120)
-        self._pepper_split_t  = None   # None = not started; float = start time
+        self._veg_half_l = [
+            get_carrot_half_left(size=120),
+            get_cucumber_half_left(size=120),
+            get_pepper_half_left(size=120),
+        ]
+        self._veg_half_r = [
+            get_carrot_half_right(size=120),
+            get_cucumber_half_right(size=120),
+            get_pepper_half_right(size=120),
+        ]
+        # Per-vegetable split-animation start times (None = not yet cut)
+        self._split_ts       = [None, None, None]
+        self._pepper_split_t = None   # kept for legacy reference in update()
 
     # ── BaseMiniGame interface ────────────────────────────────────────────────
 
@@ -290,6 +302,16 @@ class CookingScene(BaseMiniGame):
             self.chops    += 1
             self._cooldown = 6
             self._flash_event('CHOP!', (0, 255, 200), 12)
+
+            # Trigger split animation for each vegetable on its last chop
+            _split_triggers = [
+                S1_VEG_CHOP_OFFSET[i] + S1_VEG_CHOP_MAX[i]
+                for i in range(3)
+            ]  # [2, 4, 5]
+            for vi, trigger in enumerate(_split_triggers):
+                if self.chops == trigger and self._split_ts[vi] is None:
+                    self._split_ts[vi] = time.time()
+
             if self.chops >= CHOP_TARGET:
                 self._held_tool      = None
                 self._held_by        = -1
@@ -297,7 +319,7 @@ class CookingScene(BaseMiniGame):
                 self._knife_pos      = [S1_KNIFE_X, S1_KNIFE_Y]
                 self._chop_ref_y     = None
                 self._chop_dir       = None
-                self._pepper_split_t = time.time()
+                self._pepper_split_t = self._split_ts[2]  # sync with unified list
             return ['cut']
         return []
 
@@ -400,25 +422,25 @@ class CookingScene(BaseMiniGame):
             lx = bx + bw * i // 8
             cv2.line(frame, (lx, by+4), (lx, by+bh-4), (45, 85, 35), 1)
 
-        # Draw 3 vegetables; each gets cut marks as chops accumulate
+        # Draw 3 vegetables — split animation on last chop, cut marks before that
         for vi, (spr, vx) in enumerate(zip(self._veg_sprs, S1_VEG_XS)):
-            # ── Pepper (vi=2): whole → split animation ───────────────────────
-            if vi == 2 and self._pepper_split_t is not None:
-                elapsed = time.time() - self._pepper_split_t
-                raw_t   = min(elapsed / 0.45, 1.0)
-                # Smooth-step easing
+            split_t = self._split_ts[vi]
+
+            if split_t is not None:
+                # Split animation: smooth-step ease, halves slide apart
+                raw_t  = min((time.time() - split_t) / 0.45, 1.0)
                 t      = raw_t * raw_t * (3.0 - 2.0 * raw_t)
                 offset = int(t * 52)
-                overlay(frame, self._pepper_half_l, vx - offset, S1_VEG_Y, size=115)
-                overlay(frame, self._pepper_half_r, vx + offset, S1_VEG_Y, size=115)
+                overlay(frame, self._veg_half_l[vi], vx - offset, S1_VEG_Y, size=115)
+                overlay(frame, self._veg_half_r[vi], vx + offset, S1_VEG_Y, size=115)
                 continue
 
             overlay(frame, spr, vx, S1_VEG_Y, size=115)
 
-            # How many horizontal cut lines to show on this vegetable
+            # Horizontal cut marks before the final split
             n_cuts = min(
                 max(self.chops - S1_VEG_CHOP_OFFSET[vi], 0),
-                S1_VEG_CHOP_MAX[vi]
+                S1_VEG_CHOP_MAX[vi] - 1   # last cut shows as split, not a line
             )
             for c in range(n_cuts):
                 offset_y = int((c - (n_cuts - 1) / 2.0) * 18)

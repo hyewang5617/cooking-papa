@@ -44,10 +44,52 @@ def get_carrot_slice(size=120):
     return _cache[key]
 
 
+def get_carrot_whole(size=120):
+    key = ('carrot_whole', size)
+    if key not in _cache:
+        _cache[key] = _make_carrot_whole(size)
+    return _cache[key]
+
+
+def get_carrot_half_left(size=120):
+    key = ('carrot_half_l', size)
+    if key not in _cache:
+        _cache[key] = _make_carrot_half(size, left=True)
+    return _cache[key]
+
+
+def get_carrot_half_right(size=120):
+    key = ('carrot_half_r', size)
+    if key not in _cache:
+        _cache[key] = _make_carrot_half(size, left=False)
+    return _cache[key]
+
+
 def get_cucumber_slice(size=120):
     key = ('cucumber_slice', size)
     if key not in _cache:
         _cache[key] = _make_cucumber_slice(size)
+    return _cache[key]
+
+
+def get_cucumber_whole(size=120):
+    key = ('cucumber_whole', size)
+    if key not in _cache:
+        _cache[key] = _make_cucumber_whole(size)
+    return _cache[key]
+
+
+def get_cucumber_half_left(size=120):
+    key = ('cucumber_half_l', size)
+    if key not in _cache:
+        _cache[key] = _make_cucumber_half(size, left=True)
+    return _cache[key]
+
+
+def get_cucumber_half_right(size=120):
+    key = ('cucumber_half_r', size)
+    if key not in _cache:
+        _cache[key] = _make_cucumber_half(size, left=False)
     return _cache[key]
 
 
@@ -231,6 +273,144 @@ def _make_pepper_half(size, left=True):
         sy_s = int(cy + (i - 1) * face_ry * 0.36)
         cv2.circle(img, (cx, sy_s), max(2, int(r * 0.057)), (215, 245, 255, 255), -1)
 
+    return img
+
+
+def _make_carrot_whole(size):
+    """Whole carrot, top-down view (orange teardrop with green leaves)."""
+    img = np.zeros((size, size, 4), dtype=np.uint8)
+    cx  = size // 2
+    cy  = int(size * 0.50)
+    rx  = int(size * 0.22)   # narrower
+    ry  = int(size * 0.39)   # taller
+
+    DARK = (0,  75, 158, 255)
+    ORG  = (0, 155, 252, 255)
+    LITE = (20, 200, 255, 255)
+    GRN  = (25, 138,  40, 255)
+    DKGN = (12,  78,  22, 255)
+
+    # Outline (inflated ellipse)
+    cv2.ellipse(img, (cx, cy), (rx + 3, ry + 3), 0, 0, 360, DARK, -1)
+    # Main orange body
+    cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, ORG, -1)
+    # Highlight
+    cv2.ellipse(img, (cx - int(rx * 0.35), cy - int(ry * 0.22)),
+                (int(rx * 0.45), int(ry * 0.35)), 0, 0, 360, LITE, -1)
+    # Tapered tip at bottom
+    tip = np.array([
+        [cx - int(rx * 0.50), cy + int(ry * 0.62)],
+        [cx + int(rx * 0.50), cy + int(ry * 0.62)],
+        [cx,                  cy + ry + int(size * 0.10)],
+    ], dtype=np.int32)
+    cv2.fillPoly(img, [tip], ORG)
+    cv2.polylines(img, [tip], True, DARK, 2)
+    # Texture rings
+    for yf in [0.20, 0.46, 0.70]:
+        ring_y  = int(cy - ry + 2 * ry * yf)
+        ring_rx = max(2, int(rx * (1.0 - abs(yf - 0.45) * 0.30)))
+        cv2.ellipse(img, (cx, ring_y), (ring_rx, max(2, int(ry * 0.04))),
+                    0, 0, 360, DARK, 1)
+    # Stem
+    sy_base = cy - ry + int(ry * 0.06)
+    sw = max(3, int(size * 0.06))
+    cv2.rectangle(img, (cx - sw // 2, sy_base - int(size * 0.14)),
+                  (cx + sw // 2, sy_base), GRN, -1)
+    cv2.rectangle(img, (cx - sw // 2, sy_base - int(size * 0.14)),
+                  (cx + sw // 2, sy_base), DKGN, 1)
+    # Feathery leaves
+    for i in range(5):
+        a   = math.radians(-105 + i * 26)
+        lx2 = int(cx + math.cos(a) * rx * 1.9)
+        ly2 = int(sy_base - int(size * 0.06) + math.sin(a) * ry * 0.38)
+        cv2.line(img, (cx, sy_base - int(size * 0.03)), (lx2, ly2), GRN, 2)
+    # Gloss
+    cv2.ellipse(img, (cx - int(rx * 0.30), cy - int(ry * 0.28)),
+                (int(rx * 0.20), int(ry * 0.13)), -20, 0, 360, (80, 220, 255, 130), -1)
+    return img
+
+
+def _make_carrot_half(size, left=True):
+    """Half carrot after vertical cut, interior (orange rings) visible."""
+    img    = _make_carrot_whole(size)
+    cx     = size // 2
+    cy     = int(size * 0.50)
+    ry     = int(size * 0.39)
+
+    if left:
+        img[:, cx + 1:, 3] = 0
+    else:
+        img[:, :cx, 3] = 0
+
+    face_ry = int(ry * 0.84)
+    face_t  = 9
+    # Dark orange wall
+    cv2.rectangle(img, (cx - face_t // 2, cy - face_ry),
+                  (cx + face_t // 2, cy + face_ry), (0, 80, 165, 255), -1)
+    # Lighter orange flesh
+    cv2.rectangle(img, (cx - face_t // 2 + 2, cy - int(face_ry * 0.87)),
+                  (cx + face_t // 2 - 2, cy + int(face_ry * 0.87)), (20, 195, 255, 255), -1)
+    # Inner ring hint
+    cv2.ellipse(img, (cx, cy), (face_t // 2 - 1, int(face_ry * 0.28)),
+                0, 0, 360, (0, 90, 175, 255), 1)
+    return img
+
+
+def _make_cucumber_whole(size):
+    """Whole cucumber, top-down view (dark green oval with light stripes)."""
+    img = np.zeros((size, size, 4), dtype=np.uint8)
+    cx  = size // 2
+    cy  = int(size * 0.50)
+    rx  = int(size * 0.23)
+    ry  = int(size * 0.40)
+
+    DARK = (12,  55, 15, 255)
+    GRN  = (22, 108, 28, 255)
+    LITE = (70, 175, 55, 255)
+
+    # Outline
+    cv2.ellipse(img, (cx, cy), (rx + 3, ry + 3), 0, 0, 360, DARK, -1)
+    # Body
+    cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, GRN, -1)
+    # Light stripes (3 vertical)
+    for sx in [-int(rx * 0.50), 0, int(rx * 0.50)]:
+        cv2.ellipse(img, (cx + sx, cy), (max(2, int(rx * 0.13)), int(ry * 0.84)),
+                    0, 0, 360, LITE, -1)
+    # End bumps
+    for ey in [cy - ry, cy + ry]:
+        cv2.circle(img, (cx, ey), int(rx * 0.42), GRN,  -1)
+        cv2.circle(img, (cx, ey), int(rx * 0.25), LITE, -1)
+    cv2.ellipse(img, (cx, cy), (rx + 3, ry + 3), 0, 0, 360, DARK, 2)
+    # Gloss
+    cv2.ellipse(img, (cx - int(rx * 0.32), cy - int(ry * 0.24)),
+                (int(rx * 0.30), int(ry * 0.18)), -20, 0, 360, (150, 220, 140, 110), -1)
+    return img
+
+
+def _make_cucumber_half(size, left=True):
+    """Half cucumber after vertical cut, light green flesh + seeds visible."""
+    img    = _make_cucumber_whole(size)
+    cx     = size // 2
+    cy     = int(size * 0.50)
+    ry     = int(size * 0.40)
+
+    if left:
+        img[:, cx + 1:, 3] = 0
+    else:
+        img[:, :cx, 3] = 0
+
+    face_ry = int(ry * 0.84)
+    face_t  = 9
+    # Dark green outer ring
+    cv2.rectangle(img, (cx - face_t // 2, cy - face_ry),
+                  (cx + face_t // 2, cy + face_ry), (12, 55, 15, 255), -1)
+    # Light green flesh
+    cv2.rectangle(img, (cx - face_t // 2 + 2, cy - int(face_ry * 0.87)),
+                  (cx + face_t // 2 - 2, cy + int(face_ry * 0.87)), (120, 208, 88, 255), -1)
+    # Seed dots
+    for i in range(4):
+        sy_s = int(cy - face_ry * 0.52 + i * face_ry * 0.35)
+        cv2.circle(img, (cx, sy_s), max(1, int(size * 0.024)), (210, 250, 195, 255), -1)
     return img
 
 

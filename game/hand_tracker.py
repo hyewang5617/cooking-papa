@@ -188,13 +188,23 @@ class HandTracker:
 
         for i, lms in enumerate(result.hand_landmarks):
             tracker = self._trackers[i] if i < len(self._trackers) else self._trackers[-1]
-            gripped, g_dist  = _calc_grip(lms)
+            gripped, g_dist = _calc_grip(lms)
+
+            # World / velocity: wrist + middle-MCP midpoint (stable palm reference)
             px = (lms[0].x + lms[9].x) / 2
             py = (lms[0].y + lms[9].y) / 2
-            wx, wy           = _to_world(px, py)
-            vx, vy           = tracker.update(wx, wy)
-            wz               = _calc_depth(lms)
-            sx, sy           = _world_to_screen(wx, wy)
+            wx, wy = _to_world(px, py)
+            vx, vy = tracker.update(wx, wy)
+            wz     = _calc_depth(lms)
+
+            # Screen position: centroid of ALL 21 landmarks, direct linear mapping.
+            # This matches exactly where hand_avatar.py centres the drawn avatar,
+            # so grab / chop detection fires where the player sees the mini hand.
+            avg_nx = sum(lm.x for lm in lms) / len(lms)
+            avg_ny = sum(lm.y for lm in lms) / len(lms)
+            sx = int(avg_nx * 1280)
+            sy = int(avg_ny * 720)
+
             new_states.append(
                 HandState(True, wx, wy, wz, vx, vy, gripped, g_dist, sx, sy, list(lms))
             )
