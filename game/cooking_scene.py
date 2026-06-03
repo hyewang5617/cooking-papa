@@ -40,6 +40,22 @@ S1_VEG_SIZE = 230               # sprite display size (2× original 115)
 S1_VEG_CHOP_OFFSET = [0, 2, 4]  # chop index when this veg starts being cut
 S1_VEG_CHOP_MAX    = [2, 2, 1]  # max visible cuts per vegetable
 
+# ── Stage 1 NEW: Onion cutting (Cooking Mama style) ──────────────────────────
+_ONB_R        = 165     # display radius of whole onion
+_ONB_START_Y  = 155     # initial onion y (top, before placing)
+_ONB_BOARD_Y  = 415     # y where onion rests on board
+_PEEL_NEEDED  = 3       # horizontal swipes to peel
+_PEEL_PX      = 80      # px threshold per swipe
+_SLICE_NEEDED   = 4       # slice strokes required
+_SLICE_PX       = 52      # px threshold per slice
+_SLICE_KNIFE_X  = 370     # knife resting x on board (left of onion)
+_SLICE_KNIFE_Y  = 415     # knife resting y
+_BOWL_TRIPS   = 2       # carry trips to bowl
+_BOWL2_CX     = 900     # bowl center x
+_BOWL2_CY     = 415     # bowl center y
+_PIECES_CX    = 390     # sliced pieces center x
+_PIECES_CY    = 430     # sliced pieces center y
+
 # ── Onion Fry (between Stage 1 and Stage 2) ──────────────────────────────────
 ONION_PAN_CX  = 640
 ONION_PAN_CY  = 385
@@ -71,8 +87,14 @@ _COUNTER_Y  = 340    # kitchen counter line (fixed, not % of height)
 
 # ── Phase hints ───────────────────────────────────────────────────────────────
 _PHASE_HINTS = {
-    'grab_knife':       ('GRAB the knife!',        (0, 200, 255)),
-    'chopping':         ('Chop  UP  and  DOWN!',   (0, 255, 180)),
+    # ── new Stage 1 ──────────────────────────────────────────────────────────
+    'place_onion':  ('Grip  and  pull  DOWN!',      (0, 220, 255)),
+    'peel_skin':    ('Grip  and  swipe  LEFT / RIGHT!', (0, 200, 255)),
+    'slice_onion':  ('Grip  and  chop  UP  &  DOWN!',   (0, 255, 180)),
+    'bowl_drop':    ('Grip  pieces  →  bowl!',          (255, 200, 50)),
+    # ── old Stage 1 (commented out) ────────────────────────────────────────
+    # 'grab_knife':  ('GRAB the knife!',  (0, 200, 255)),
+    # 'chopping':    ('Chop UP and DOWN!',(0, 255, 180)),
     'pepper_splitting': ('',                            (0, 255, 100)),
     'onion_fry':        ('Stir  then  turn  off  flame!', (0, 230, 160)),
     'grab_spatula':     ('GRAB the spatula!',           (0, 200, 255)),
@@ -91,7 +113,7 @@ class CookingScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'grab_knife'
+        self._phase     = 'place_onion'   # NEW entry point
         self._held_tool = None
         self._held_by   = -1
 
@@ -99,9 +121,23 @@ class CookingScene(BaseMiniGame):
         self.stirs = 0
         self.flips = 0
 
-        # chop detection: screen-coordinate based
-        self._chop_ref_y = None  # screen_y at last direction change
-        self._chop_dir   = None  # 'up' | 'down' | None
+        # ── New Stage 1 state ─────────────────────────────────────────────
+        self._onb_y       = float(_ONB_START_Y)  # onion y during place phase
+        self._peel_done   = 0
+        self._peel_ref_x  = None
+        self._peel_dir    = None     # 'left' | 'right' | None
+        self._slice_done       = 0
+        self._slice_ref_y      = None
+        self._slice_dir        = None       # 'up' | 'down' | None
+        self._slice_knife_pos  = [_SLICE_KNIFE_X, _SLICE_KNIFE_Y]
+        self._slice_knife_hand = -1         # index of hand holding knife, -1 = none
+        self._bowl_count  = 0
+        self._carrying    = False
+        self._carry_xy    = (0, 0)
+
+        # chop detection: screen-coordinate based (kept for old stage, unused)
+        self._chop_ref_y = None
+        self._chop_dir   = None
 
         # flip detection: screen-delta based
         self._flip_prev_y = None
@@ -162,8 +198,12 @@ class CookingScene(BaseMiniGame):
     @property
     def progress_text(self):
         p = self._phase
-        if p == 'grab_knife':       return 'Step 1/3  —  Grab the knife!'
-        if p == 'chopping':         return f'Step 1/3  —  Chop  {self.chops}/{CHOP_TARGET}'
+        if p == 'place_onion':  return 'Step 1  —  Place the onion!'
+        if p == 'peel_skin':    return f'Step 1  —  Peel  {self._peel_done}/{_PEEL_NEEDED}'
+        if p == 'slice_onion':  return f'Step 1  —  Slice  {self._slice_done}/{_SLICE_NEEDED}'
+        if p == 'bowl_drop':    return f'Step 1  —  Bowl  {self._bowl_count}/{_BOWL_TRIPS}'
+        # if p == 'grab_knife': return 'Step 1/3  —  Grab the knife!'    # old
+        # if p == 'chopping':   return ...                                # old
         if p == 'pepper_splitting': return 'Step 1/3  —  Nice cut!'
         if p == 'onion_fry':
             pct = int(self._onion_cook * 100)
@@ -190,24 +230,27 @@ class CookingScene(BaseMiniGame):
             self._trail.pop(0)
 
         p = self._phase
-        if p == 'grab_knife':
-            events += self._try_grab(hands, self._knife_pos, 'knife', 'chopping')
 
-        elif p == 'chopping':
-            if active is None:
-                self._try_reattach(hands, self._knife_pos, 'knife')
-                active = self._get_active_hand(hands)
-            self._sync_tool_pos(active)
-            if active:
-                events += self._do_chop(active)
-            else:
-                self._chop_ref_y = None
-                self._chop_dir   = None
+        # ── New Stage 1 ───────────────────────────────────────────────────────
+        if p == 'place_onion':
+            events += self._do_place_onion(hands)
 
-        elif p == 'pepper_splitting':
-            if self._pepper_split_t is not None and time.time() - self._pepper_split_t > 0.55:
-                self._phase = 'onion_fry'
-                self._init_onion()
+        elif p == 'peel_skin':
+            events += self._do_peel(hands)
+
+        elif p == 'slice_onion':
+            events += self._do_slice_onion(hands)
+
+        elif p == 'bowl_drop':
+            events += self._do_bowl_drop(hands)
+
+        # ── Old Stage 1 (commented out) ───────────────────────────────────────
+        # elif p == 'grab_knife':
+        #     events += self._try_grab(hands, self._knife_pos, 'knife', 'chopping')
+        # elif p == 'chopping':
+        #     ...  (old chop logic)
+        # elif p == 'pepper_splitting':
+        #     ...  (old split logic)
 
         elif p == 'onion_fry':
             self._update_onion_fry(hands)
@@ -436,8 +479,10 @@ class CookingScene(BaseMiniGame):
         _draw_counter(frame, w, h)
 
         p = self._phase
-        if p in ('grab_knife', 'chopping', 'pepper_splitting'):
-            self._draw_stage1(frame)
+        if p in ('place_onion', 'peel_skin', 'slice_onion', 'bowl_drop'):
+            self._draw_onion_cut(frame)
+        # elif p in ('grab_knife', 'chopping', 'pepper_splitting'):  # old stage 1
+        #     self._draw_stage1(frame)
         elif p == 'onion_fry':
             self._draw_onion_fry(frame)
         elif p in ('grab_spatula', 'stirring'):
@@ -559,6 +604,43 @@ class CookingScene(BaseMiniGame):
         """Animated guide hand showing the required motion for the current phase."""
         t = time.time()
         p = self._phase
+
+        if p == 'place_onion':
+            # Hand pulls down from above
+            cy_d = int(_ONB_START_Y + 200 * ((math.sin(t * 1.4) + 1) / 2))
+            _demo_fist(frame, 640, cy_d, openness=0.3)
+            cv2.arrowedLine(frame, (640, cy_d - 70), (640, cy_d + 60),
+                            (0, 220, 255), 3, tipLength=0.3)
+            return
+        elif p == 'peel_skin':
+            # Hand swipes left-right
+            ox = int(120 * math.sin(t * 2.2))
+            _demo_fist(frame, 640 + ox, _ONB_BOARD_Y - 20, openness=0.0)
+            return
+        elif p == 'slice_onion':
+            if self._slice_knife_hand == -1:
+                # Demo: approach the knife
+                wave = (math.sin(t * 1.8) + 1) / 2
+                off  = int(60 * wave)
+                grip = 1.0 - wave
+                _demo_fist(frame,
+                           self._slice_knife_pos[0] - 100 + off,
+                           self._slice_knife_pos[1] - 20,
+                           openness=grip)
+            else:
+                # Demo: chop up-down with knife over onion
+                oy = int(70 * math.sin(t * 3.0))
+                _demo_fist(frame, 640 - 210, _ONB_BOARD_Y + oy, openness=0.0)
+                cv2.arrowedLine(frame, (640 - 210, _ONB_BOARD_Y + oy - 50),
+                                (640 - 210, _ONB_BOARD_Y + oy + 50),
+                                (0, 230, 180), 2, tipLength=0.4)
+            return
+        elif p == 'bowl_drop':
+            # Hand moves from pieces to bowl
+            wave = (math.sin(t * 1.2) + 1) / 2
+            dx = int(_PIECES_CX + (_BOWL2_CX - _PIECES_CX) * wave)
+            _demo_fist(frame, dx, _PIECES_CY, openness=0.0)
+            return
 
         if p in ('pepper_splitting', 'onion_fry'):
             if p == 'onion_fry':
@@ -805,6 +887,271 @@ class CookingScene(BaseMiniGame):
                      _FLAME_BTN_CX, _FLAME_BTN_CY + _FLAME_BTN_R + 24,
                      0.62, (255, 255, 255) if ready else (160, 160, 180),
                      1, center=True)
+
+    # ── New Stage 1: Onion cutting ────────────────────────────────────────────
+
+    def _do_place_onion(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                continue
+            if not self.timer_started:
+                self._begin_timer()
+            if hand.screen_y > self._onb_y:
+                self._onb_y = min(float(hand.screen_y), float(_ONB_BOARD_Y))
+            if self._onb_y >= _ONB_BOARD_Y:
+                self._phase = 'peel_skin'
+                self._flash_event('PLACED!', (0, 255, 180), 14)
+                return ['grab']
+        return []
+
+    def _do_peel(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                self._peel_ref_x = None
+                self._peel_dir   = None
+                continue
+            sx = hand.screen_x
+            if self._peel_ref_x is None:
+                self._peel_ref_x = sx
+                continue
+            delta = sx - self._peel_ref_x
+            if self._peel_dir is None:
+                if abs(delta) >= _PEEL_PX:
+                    self._peel_dir   = 'right' if delta > 0 else 'left'
+                    self._peel_ref_x = sx
+            elif self._peel_dir == 'right' and delta <= -_PEEL_PX:
+                self._peel_dir   = 'left'
+                self._peel_ref_x = sx
+                self._peel_done += 1
+                self._flash_event('PEEL!', (0, 210, 255), 12)
+                if self._peel_done >= _PEEL_NEEDED:
+                    self._phase = 'slice_onion'
+                return ['cut']
+            elif self._peel_dir == 'left' and delta >= _PEEL_PX:
+                self._peel_dir   = 'right'
+                self._peel_ref_x = sx
+                self._peel_done += 1
+                self._flash_event('PEEL!', (0, 210, 255), 12)
+                if self._peel_done >= _PEEL_NEEDED:
+                    self._phase = 'slice_onion'
+                return ['cut']
+        return []
+
+    def _do_slice_onion(self, hands):
+        if self._cooldown > 0:
+            self._cooldown -= 1
+            return []
+
+        # ── Step A: grab the knife first ─────────────────────────────────────
+        if self._slice_knife_hand == -1:
+            for i, hand in enumerate(hands):
+                if not hand.detected or not hand.gripped:
+                    continue
+                dx = hand.screen_x - self._slice_knife_pos[0]
+                dy = hand.screen_y - self._slice_knife_pos[1]
+                if dx * dx + dy * dy < GRAB_RADIUS ** 2:
+                    self._slice_knife_hand = i
+                    self._slice_ref_y      = None
+                    self._slice_dir        = None
+                    self._flash_event('GRAB!', (0, 220, 255), 8)
+                    return ['grab']
+            return []
+
+        # ── Step B: verify hand is still gripping ────────────────────────────
+        if self._slice_knife_hand >= len(hands):
+            self._slice_knife_hand = -1
+            return []
+        hand = hands[self._slice_knife_hand]
+        if not hand.detected or not hand.gripped:
+            # dropped — allow re-grab at current knife position
+            self._try_reattach(hands, self._slice_knife_pos, 'slice_knife')
+            if self._held_tool == 'slice_knife':
+                self._slice_knife_hand = self._held_by
+                self._held_tool = None   # don't interfere with other grabs
+            else:
+                self._slice_knife_hand = -1
+            self._slice_ref_y = None
+            self._slice_dir   = None
+            return []
+
+        # ── Step C: knife follows hand ────────────────────────────────────────
+        self._slice_knife_pos = [hand.screen_x, hand.screen_y]
+
+        # Knife must be over the onion (x near center 640)
+        if abs(hand.screen_x - 640) > _ONB_R + 55:
+            self._slice_ref_y = None
+            self._slice_dir   = None
+            return []
+
+        # ── Step D: detect up-down stroke ────────────────────────────────────
+        sy = hand.screen_y
+        if self._slice_ref_y is None:
+            self._slice_ref_y = sy
+            return []
+        delta = sy - self._slice_ref_y
+
+        if self._slice_dir is None:
+            if delta >= _SLICE_PX:
+                self._slice_dir   = 'down'
+                self._slice_ref_y = sy
+            elif delta <= -_SLICE_PX:
+                self._slice_dir   = 'up'
+                self._slice_ref_y = sy
+        elif self._slice_dir == 'down' and delta <= -_SLICE_PX:
+            self._slice_dir   = 'up'
+            self._slice_ref_y = sy
+            self._slice_done += 1
+            self._cooldown    = 6
+            self._flash_event('SLICE!', (0, 255, 200), 12)
+            if self._slice_done >= _SLICE_NEEDED:
+                self._phase = 'bowl_drop'
+            return ['cut']
+        elif self._slice_dir == 'up' and delta >= _SLICE_PX:
+            self._slice_dir   = 'down'
+            self._slice_ref_y = sy
+            self._slice_done += 1
+            self._cooldown    = 6
+            self._flash_event('SLICE!', (0, 255, 200), 12)
+            if self._slice_done >= _SLICE_NEEDED:
+                self._phase = 'bowl_drop'
+            return ['cut']
+        return []
+
+    def _do_bowl_drop(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                self._carrying = False
+                continue
+            hx, hy = hand.screen_x, hand.screen_y
+            if not self._carrying:
+                dx = hx - _PIECES_CX
+                dy = hy - _PIECES_CY
+                if dx * dx + dy * dy < 160 ** 2:
+                    self._carrying = True
+            else:
+                self._carry_xy = (hx, hy)
+                if hx > _BOWL2_CX - 120:
+                    self._carrying  = False
+                    self._bowl_count += 1
+                    self._flash_event('IN!', (255, 200, 50), 18)
+                    if self._bowl_count >= _BOWL_TRIPS:
+                        self._phase = 'onion_fry'
+                        self._init_onion()
+                    return ['grab']
+        return []
+
+    # ── Drawing: Onion cut scene ──────────────────────────────────────────────
+
+    def _draw_big_onion(self, frame, cx, cy, peel_frac=0.0, slices=0):
+        r = _ONB_R
+        # White flesh base
+        cv2.circle(frame, (cx, cy), r, (220, 235, 242), -1)
+        cv2.circle(frame, (cx, cy), int(r * 0.68), (205, 222, 232), 2)
+        cv2.circle(frame, (cx, cy), int(r * 0.36), (188, 210, 222), 2)
+        cv2.circle(frame, (cx, cy), max(4, int(r * 0.10)), (165, 196, 212), -1)
+
+        # Brown skin (fades out as peel_frac → 1)
+        if peel_frac < 1.0:
+            alpha_s = 1.0 - peel_frac
+            skin_r  = int(r * 0.97)
+            for i in range(10):
+                a0 = i * 36 - 5
+                a1 = a0 + int(32 * alpha_s)
+                if a1 > a0:
+                    cv2.ellipse(frame, (cx, cy), (skin_r, skin_r),
+                                0, a0, a1, (48, 98, 148), int(skin_r * 0.28))
+            cv2.circle(frame, (cx, cy), skin_r, (32, 72, 115), 3)
+
+        # Slice cut marks (vertical lines)
+        if slices > 0:
+            for i in range(slices):
+                sx = cx - r + int(r * 2.0 * (i + 1) / (slices + 1))
+                cv2.line(frame, (sx, cy - int(r * 0.88)),
+                         (sx, cy + int(r * 0.88)),
+                         (240, 252, 255), 3, cv2.LINE_AA)
+
+        # Green shoots at top
+        for ox, ly2 in [(-14, -50), (0, -65), (18, -55)]:
+            cv2.line(frame, (cx, cy - r + 12),
+                     (cx + ox, cy - r + ly2),
+                     (28, 140, 38), 4)
+
+        # Outline
+        cv2.circle(frame, (cx, cy), r, (28, 68, 108), 4)
+
+    def _draw_onion_cut(self, frame):
+        p  = self._phase
+        fw = frame.shape[1]
+
+        # Large cutting board (fills bottom half)
+        board_top = 345
+        cv2.rectangle(frame, (0, board_top), (fw, frame.shape[0]),
+                      (50, 108, 40), -1)
+        for gx in range(0, fw, 115):
+            cv2.line(frame, (gx, board_top), (gx, frame.shape[0]),
+                     (40, 92, 32), 1)
+        cv2.line(frame, (0, board_top), (fw, board_top), (30, 76, 24), 4)
+
+        # Onion
+        onion_cx = fw // 2
+        onion_cy = int(self._onb_y) if p == 'place_onion' else _ONB_BOARD_Y
+        peel_frac = min(self._peel_done / _PEEL_NEEDED, 1.0)
+        slices    = self._slice_done if p in ('slice_onion', 'bowl_drop') else 0
+        self._draw_big_onion(frame, onion_cx, onion_cy, peel_frac, slices)
+
+        # Knife (visible during slice phase)
+        if p == 'slice_onion':
+            kx = int(self._slice_knife_pos[0])
+            ky = int(self._slice_knife_pos[1])
+            overlay(frame, self._knife_spr, kx, ky, size=195)
+            # Show grab ring only when knife not yet held
+            if self._slice_knife_hand == -1:
+                _grab_ring(frame, self._slice_knife_pos)
+
+        # Sliced pieces + bowl (bowl_drop phase)
+        if p == 'bowl_drop':
+            # Bowl on right
+            self._draw_bowl_right(frame)
+            # Pieces cluster on left (or following hand if carrying)
+            if self._carrying:
+                px, py = int(self._carry_xy[0]), int(self._carry_xy[1])
+            else:
+                px, py = _PIECES_CX, _PIECES_CY
+            self._draw_onion_pieces(frame, px, py)
+
+        # Arrow guide for place_onion
+        if p == 'place_onion':
+            ay = int(self._onb_y) - 85
+            cv2.arrowedLine(frame, (onion_cx, ay), (onion_cx, ay + 70),
+                            (0, 220, 255), 4, tipLength=0.28)
+
+    def _draw_bowl_right(self, frame):
+        cx, cy = _BOWL2_CX, _BOWL2_CY
+        cv2.ellipse(frame, (cx, cy + 35), (95, 28), 0, 0, 360, (38, 34, 30), -1)
+        body = np.array([[cx - 90, cy + 10], [cx + 90, cy + 10],
+                         [cx + 65, cy - 60], [cx - 65, cy - 60]], dtype=np.int32)
+        cv2.fillPoly(frame, [body], (155, 158, 165))
+        cv2.polylines(frame, [body], True, (100, 102, 108), 3)
+        cv2.ellipse(frame, (cx, cy - 60), (65, 20), 0, 0, 360, (178, 182, 188), -1)
+        cv2.ellipse(frame, (cx, cy - 60), (65, 20), 0, 0, 360, (115, 118, 124), 2)
+
+    def _draw_onion_pieces(self, frame, cx, cy):
+        rng = [(cx - 50, cy - 30), (cx + 40, cy - 20), (cx, cy + 15),
+               (cx - 30, cy + 35), (cx + 55, cy + 25), (cx + 10, cy - 45),
+               (cx - 55, cy + 10), (cx + 38, cy + 45)]
+        for i, (px, py) in enumerate(rng):
+            ang = i * 0.7
+            w2, h2 = 18, 13
+            ca, sa = math.cos(ang), math.sin(ang)
+            pts = np.array([
+                [px + int(-w2*ca + h2*sa), py + int(-w2*sa - h2*ca)],
+                [px + int( w2*ca + h2*sa), py + int( w2*sa - h2*ca)],
+                [px + int( w2*ca - h2*sa), py + int( w2*sa + h2*ca)],
+                [px + int(-w2*ca - h2*sa), py + int(-w2*sa + h2*ca)],
+            ], dtype=np.int32)
+            cv2.fillPoly(frame, [pts + 2], (22, 20, 18))
+            cv2.fillPoly(frame, [pts], (215, 235, 245))
+            cv2.polylines(frame, [pts], True, (155, 175, 185), 1)
 
     def _draw_hint(self, frame, w, h):
         p = self._phase
