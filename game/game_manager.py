@@ -496,6 +496,3 @@ class GameManager:
                                                   self.game.time_remaining < 15)
                                             else COLOR_SUCCESS)
 
-        pt = self.game.progress_text
-        if pt:
-            draw_text(frame, pt, (18, 110), scale=0.85, color=COLOR_WHITE)

@@ -590,7 +590,6 @@ class CookingScene(BaseMiniGame):
             _shadow_text(frame, self._flash_lbl, w // 2, h // 3,
                          2.4, self._flash_col, 5, center=True)
 
-        self._draw_hint(frame, w, h)
         return frame
 
     def _draw_stage1(self, frame):
