@@ -21,20 +21,21 @@ STIR_TARGET  = 3
 FLIP_TARGET  = 2
 
 CHOP_PIXELS  = 55    # screen-pixel travel needed per chop stroke
-CHOP_RANGE   = 90    # px — knife center must be within this of the target vegetable
+CHOP_RANGE   = 115   # px — knife center must be within this of the target vegetable
 FLIP_PIXELS  = 18    # screen-pixel upward jump per frame to trigger flip
 STIR_MIN_R   = 0.40  # world-unit min radius for stir detection
 GRAB_RADIUS  = 130   # px proximity to grab
 
 # ── Stage 1 – Cutting  (objects in center of screen, y ≈ 400-440) ─────────────
-S1_BOARD_X  = 310
-S1_BOARD_Y  = 358
-S1_BOARD_W  = 660
-S1_BOARD_H  = 140
-S1_KNIFE_X  = 430
-S1_KNIFE_Y  = 415
-S1_VEG_Y    = 415
-S1_VEG_XS   = [580, 700, 820]   # carrot, cucumber, pepper x-positions
+S1_BOARD_X  = 190
+S1_BOARD_Y  = 342
+S1_BOARD_W  = 880
+S1_BOARD_H  = 168
+S1_KNIFE_X  = 278
+S1_KNIFE_Y  = 426
+S1_VEG_Y    = 426
+S1_VEG_XS   = [400, 640, 880]   # carrot, cucumber, pepper x-positions (240 px gap)
+S1_VEG_SIZE = 230               # sprite display size (2× original 115)
 # Chops each vegetable needs: total = CHOP_TARGET (5)
 S1_VEG_CHOP_OFFSET = [0, 2, 4]  # chop index when this veg starts being cut
 S1_VEG_CHOP_MAX    = [2, 2, 1]  # max visible cuts per vegetable
@@ -110,19 +111,19 @@ class CookingScene(BaseMiniGame):
         self._bowl_spr    = get_bowl(w=260, h=130)
 
         self._veg_sprs  = [
-            get_carrot_whole(size=120),
-            get_cucumber_whole(size=120),
-            get_pepper_whole(size=120),
+            get_carrot_whole(size=S1_VEG_SIZE),
+            get_cucumber_whole(size=S1_VEG_SIZE),
+            get_pepper_whole(size=S1_VEG_SIZE),
         ]
         self._veg_half_l = [
-            get_carrot_half_left(size=120),
-            get_cucumber_half_left(size=120),
-            get_pepper_half_left(size=120),
+            get_carrot_half_left(size=S1_VEG_SIZE),
+            get_cucumber_half_left(size=S1_VEG_SIZE),
+            get_pepper_half_left(size=S1_VEG_SIZE),
         ]
         self._veg_half_r = [
-            get_carrot_half_right(size=120),
-            get_cucumber_half_right(size=120),
-            get_pepper_half_right(size=120),
+            get_carrot_half_right(size=S1_VEG_SIZE),
+            get_cucumber_half_right(size=S1_VEG_SIZE),
+            get_pepper_half_right(size=S1_VEG_SIZE),
         ]
         # Per-vegetable split-animation start times (None = not yet cut)
         self._split_ts       = [None, None, None]
@@ -443,25 +444,26 @@ class CookingScene(BaseMiniGame):
                 # Split animation: smooth-step ease, halves slide apart
                 raw_t  = min((time.time() - split_t) / 0.45, 1.0)
                 t      = raw_t * raw_t * (3.0 - 2.0 * raw_t)
-                offset = int(t * 52)
-                overlay(frame, self._veg_half_l[vi], vx - offset, S1_VEG_Y, size=115)
-                overlay(frame, self._veg_half_r[vi], vx + offset, S1_VEG_Y, size=115)
+                offset = int(t * 80)
+                overlay(frame, self._veg_half_l[vi], vx - offset, S1_VEG_Y, size=S1_VEG_SIZE)
+                overlay(frame, self._veg_half_r[vi], vx + offset, S1_VEG_Y, size=S1_VEG_SIZE)
                 continue
 
-            overlay(frame, spr, vx, S1_VEG_Y, size=115)
+            overlay(frame, spr, vx, S1_VEG_Y, size=S1_VEG_SIZE)
 
             # Vertical cut marks before the final split
             n_cuts = min(
                 max(self.chops - S1_VEG_CHOP_OFFSET[vi], 0),
                 S1_VEG_CHOP_MAX[vi] - 1
             )
+            half = S1_VEG_SIZE // 2 - 10   # line length matches sprite radius
             for c in range(n_cuts):
-                offset_x = int((c - (n_cuts - 1) / 2.0) * 22)
+                offset_x = int((c - (n_cuts - 1) / 2.0) * 42)
                 cut_x    = vx + offset_x
-                cv2.line(frame, (cut_x, S1_VEG_Y - 50), (cut_x, S1_VEG_Y + 50),
+                cv2.line(frame, (cut_x, S1_VEG_Y - half), (cut_x, S1_VEG_Y + half),
                          (210, 235, 255), 2, cv2.LINE_AA)
-                cv2.circle(frame, (cut_x, S1_VEG_Y - 50), 2, (190, 220, 255), -1)
-                cv2.circle(frame, (cut_x, S1_VEG_Y + 50), 2, (190, 220, 255), -1)
+                cv2.circle(frame, (cut_x, S1_VEG_Y - half), 3, (190, 220, 255), -1)
+                cv2.circle(frame, (cut_x, S1_VEG_Y + half), 3, (190, 220, 255), -1)
 
             # Pulsing target ring on the current active vegetable during chopping
             if self._phase == 'chopping':
