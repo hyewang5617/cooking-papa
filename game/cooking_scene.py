@@ -66,7 +66,7 @@ ONION_PAN_R   = 236   # outer rim radius (295 * 0.8)
 ONION_AREA_R  = 198   # inner cooking surface (248 * 0.8)
 ONION_COUNT   = 52
 ONION_STIR_NEEDED = 3600.0  # total stir units needed to reach ONION_READY
-ONION_READY   = 0.60   # flame button activates at this fraction
+ONION_READY   = 0.45   # flame button activates at this fraction
 ONION_INFL_R  = 125    # hand influence radius (px)
 _FLAME_BTN_CX = 105
 _FLAME_BTN_CY = 610
@@ -90,6 +90,17 @@ _GR_HOPPER_Y     = _GR_CY - _GR_H // 2 - 55
 _GR_BEEF_Y0      = 115
 _GR_BEEF_DROP_Y  = _GR_HOPPER_Y + 45
 _GR_GRAB_R       = 68
+
+# ── Knead Stage ───────────────────────────────────────────────────────────────
+_KN_BOWL_CX   = 640
+_KN_BOWL_CY   = 385
+_KN_BOWL_RX   = 278
+_KN_BOWL_RY   = 208
+_KN_ONION_X   = 970    # fried onion pan resting x
+_KN_ONION_Y   = 330
+_KN_SWIPE_PX  = 85     # pixels needed for a valid swipe
+_KN_ARROW_N   = 7
+_KN_DIRS      = ('up', 'down', 'left', 'right')
 
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
@@ -120,6 +131,7 @@ _PHASE_HINTS = {
     'pepper_splitting': ('',                            (0, 255, 100)),
     'onion_fry':        ('Stir  then  turn  off  flame!', (0, 230, 160)),
     'meat_mix':         ('Grab  beef  →  drop  in  grinder!', (100, 180, 255)),
+    'knead':            ('Knead  the  meat!',              (180, 140, 255)),
     'grab_spatula':     ('GRAB the spatula!',           (0, 200, 255)),
     'stirring':         ('Stir in CIRCLES!',        (0, 255, 180)),
     'grab_pan':         ('GRAB the pan!',           (0, 200, 255)),
@@ -220,6 +232,21 @@ class CookingScene(BaseMiniGame):
         self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
         self._fry_spatula_hand = -1
 
+        # Knead state
+        self._knead_sub           = 'pour_onion'
+        self._knead_onion_x       = float(_KN_ONION_X)
+        self._knead_onion_grabbed = False
+        self._knead_arrows        = []
+        self._knead_idx           = 0
+        self._knead_ref           = None
+        self._knead_prev_ang      = None
+        self._knead_rot_total     = 0.0
+        self._knead_mix_angle     = 0.0
+        self._kn_meat_r = self._kn_meat_ang = self._kn_meat_w = None
+        self._kn_meat_h = self._kn_meat_rot = self._kn_meat_col = None
+        self._kn_onion_r = self._kn_onion_ang = self._kn_onion_w = None
+        self._kn_onion_h = self._kn_onion_rot = self._kn_onion_col = None
+
         # Meat grinder state
         self._meat_sub_phase      = 'load_beef'
         self._meat_beef_y         = float(_GR_BEEF_Y0)
@@ -250,11 +277,15 @@ class CookingScene(BaseMiniGame):
         # if p == 'chopping':   return ...                                # old
         if p == 'pepper_splitting': return 'Step 1/3  —  Nice cut!'
         if p == 'onion_fry':
-            pct = int(self._onion_cook * 100)
             if self._onion_cook < ONION_READY:
-                return f'Frying onions...  {pct}%'
+                return 'Frying onions...  Stir to cook!'
             return 'Grab the flame button!'
         if p == 'meat_mix':         return f'Mix meat  {self.meat_stirs}/{MEAT_MIX_TARGET}'
+        if p == 'knead':
+            sub = self._knead_sub
+            if sub == 'pour_onion': return 'Pour  in  the  onions!'
+            if sub == 'arrows':     return f'Knead  {self._knead_idx}/{_KN_ARROW_N}'
+            return 'One  full  turn!'
         if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
         if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
         if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
@@ -302,6 +333,9 @@ class CookingScene(BaseMiniGame):
 
         elif p == 'meat_mix':
             events += self._do_meat_mix(hands)
+
+        elif p == 'knead':
+            events += self._do_knead(hands)
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -535,6 +569,8 @@ class CookingScene(BaseMiniGame):
             self._draw_onion_fry(frame)
         elif p == 'meat_mix':
             self._draw_meat_mix(frame)
+        elif p == 'knead':
+            self._draw_knead(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
         else:
@@ -720,8 +756,8 @@ class CookingScene(BaseMiniGame):
                     dx = int(ONION_PAN_CX + r * math.cos(t * 1.6))
                     dy = int(ONION_PAN_CY + r * math.sin(t * 1.6))
                     _demo_fist(frame, dx, dy, openness=0.0)
-                else:
-                    # Approach the flame button
+                # When ONION_READY reached, regardless of spatula state → show flame btn
+                if self._onion_cook >= ONION_READY:
                     wave = (math.sin(t * 1.8) + 1) / 2
                     off  = int(70 * wave)
                     _demo_fist(frame, _FLAME_BTN_CX + 120 - off, _FLAME_BTN_CY,
@@ -767,6 +803,25 @@ class CookingScene(BaseMiniGame):
                 r  = _GR_HANDLE_ARM + 10
                 dx = int(_GR_HANDLE_CX + r * math.cos(t * 2.5))
                 dy = int(_GR_HANDLE_CY + r * math.sin(t * 2.5))
+                _demo_fist(frame, dx, dy, openness=0.0)
+
+        elif p == 'knead':
+            sub = self._knead_sub
+            if sub == 'pour_onion':
+                wave = (math.sin(t * 1.5) + 1) / 2
+                ox   = int(_KN_ONION_X - (_KN_ONION_X - _KN_BOWL_CX - 80) * wave)
+                _demo_fist(frame, ox - 70, _KN_ONION_Y, openness=1.0 - wave)
+            elif sub == 'arrows' and self._knead_idx < _KN_ARROW_N:
+                direction = self._knead_arrows[self._knead_idx]
+                wave = math.sin(t * 2.5)
+                off  = int(60 * wave)
+                ddx  = off if direction == 'right' else (-off if direction == 'left' else 0)
+                ddy  = off if direction == 'down'  else (-off if direction == 'up'   else 0)
+                _demo_fist(frame, _KN_BOWL_CX + ddx, _KN_BOWL_CY + ddy, openness=0.0)
+            elif sub == 'rotate':
+                r  = int(_KN_BOWL_RX * 0.55)
+                dx = int(_KN_BOWL_CX + r * math.cos(t * 2.2))
+                dy = int(_KN_BOWL_CY + r * math.sin(t * 2.2))
                 _demo_fist(frame, dx, dy, openness=0.0)
 
         elif p == 'stirring':
@@ -999,11 +1054,11 @@ class CookingScene(BaseMiniGame):
         icol = (255, 255, 255) if ready else (110, 110, 130)
         cv2.fillPoly(frame, [fpts], icol)
 
-        lbl = 'GRAB' if ready else f'{int(cook / ONION_READY * 100)}%'
-        _shadow_text(frame, lbl,
-                     _FLAME_BTN_CX, _FLAME_BTN_CY + _FLAME_BTN_R + 24,
-                     0.62, (255, 255, 255) if ready else (160, 160, 180),
-                     1, center=True)
+        if not ready:
+            pct_str = f'{int(cook / ONION_READY * 100)}%'
+            _shadow_text(frame, pct_str,
+                         ONION_PAN_CX, ONION_PAN_CY,
+                         2.8, (255, 230, 80), 4, center=True)
 
         # ── Spatula ───────────────────────────────────────────────────────────
         sx = int(self._fry_spatula_pos[0])
@@ -1084,7 +1139,8 @@ class CookingScene(BaseMiniGame):
                     self._flash_event('GRIND!', (80, 180, 240), 14)
                     if self.meat_stirs >= MEAT_MIX_TARGET:
                         self._meat_prev_ang = None
-                        self._phase = 'grab_spatula'
+                        self._phase = 'knead'
+                        self._init_knead()
                         return ['mix']
             self._meat_prev_ang = angle
         return []
@@ -1159,37 +1215,46 @@ class CookingScene(BaseMiniGame):
         for hoff in [(-10,-10),(0,-14),(10,-10),(-14,0),(0,0),(14,0),(-10,10),(0,14),(10,10)]:
             cv2.circle(frame, (nx + 28 + hoff[0], ny + hoff[1]), 4, (48, 45, 42), -1)
 
-        # ── Ground meat strands ───────────────────────────────────────────────
+        # ── Ground meat flow (3~4 thick falling blobs) ───────────────────────
         n_strands = self._meat_strand_count
         if n_strands > 0:
-            rng2 = np.random.default_rng(seed=13)
-            for s in range(min(n_strands, 70)):
-                ox  = int(rng2.integers(-18, 10))
-                wave_off = s * 0.65 - t * 3.0
-                pts_list = []
-                x0 = nx + ox
-                y0 = ny + 18
-                for seg in range(10):
-                    ys = y0 + seg * 16
-                    xs = x0 + int(11 * math.sin(wave_off + seg * 1.1)) - seg * 2
-                    if ys > _GR_BOWL_CY + 50:
-                        break
+            # 3 thick blob-streams falling from nozzle into bowl
+            stream_offsets = [-10, 0, 10]
+            for si, ox in enumerate(stream_offsets):
+                x0  = nx + ox
+                y0  = ny + 14
+                y1  = min(_GR_BOWL_CY + 10, y0 + int((n_strands / 70) * (_GR_BOWL_CY - y0 + 10)))
+                wave_phase = si * 1.2 - t * 3.0
+                seg_count  = max(2, (y1 - y0) // 14)
+                pts_list   = []
+                for seg in range(seg_count):
+                    ys = y0 + seg * ((y1 - y0) // max(seg_count - 1, 1))
+                    xs = x0 + int(8 * math.sin(wave_phase + seg * 1.0))
                     pts_list.append((xs, ys))
                 if len(pts_list) >= 2:
-                    r_c = 80 + (s % 4) * 8
-                    g_c = 92 + (s % 3) * 7
-                    b_c = 188 + (s % 5) * 5
+                    col = (72 + si*8, 88 + si*6, 185 + si*8)
                     cv2.polylines(frame, [np.array(pts_list, np.int32)],
-                                  False, (r_c, g_c, b_c), 3)
+                                  False, col, 10)
 
         # ── Collection bowl ───────────────────────────────────────────────────
         bcx, bcy = _GR_BOWL_CX, _GR_BOWL_CY
         cv2.ellipse(frame, (bcx + 8, bcy + 22), (85, 28), 0, 0, 360, (22, 20, 18), -1)
         cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 0, 180, (208, 214, 222), -1)
-        if n_strands > 12:
-            fill_h = min(int((n_strands - 12) * 1.8), 38)
-            cv2.ellipse(frame, (bcx, bcy - 8), (78, max(4, fill_h // 2)),
-                        0, 0, 360, (85, 100, 195), -1)
+        # 3~4 large ellipses filling bowl as meat accumulates
+        if n_strands > 0:
+            rng_b = np.random.default_rng(seed=77)
+            n_blobs = min(4, 1 + n_strands // 18)
+            for bi in range(n_blobs):
+                boff_x = int(rng_b.integers(-38, 38))
+                boff_y = int(rng_b.integers(-14, 14))
+                brx    = int(rng_b.integers(30, 58))
+                bry    = int(rng_b.integers(18, 30))
+                bang   = int(rng_b.integers(0, 180))
+                bc     = (int(rng_b.integers(65, 90)),
+                          int(rng_b.integers(85, 110)),
+                          int(rng_b.integers(175, 210)))
+                cv2.ellipse(frame, (bcx + boff_x, bcy - 6 + boff_y),
+                            (brx, bry), bang, 0, 360, bc, -1)
         cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 180, 360, (208, 214, 222), -1)
         cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 0, 360, (235, 240, 248), 4)
 
@@ -1213,6 +1278,242 @@ class CookingScene(BaseMiniGame):
             _shadow_text(frame, f'{self.meat_stirs}/{MEAT_MIX_TARGET}',
                          _GR_HANDLE_CX, _GR_HANDLE_CY + _GR_HANDLE_ARM + 50,
                          1.0, (255, 230, 100), 2, center=True)
+
+    # ── Knead Stage ──────────────────────────────────────────────────────────
+
+    def _init_knead(self):
+        import random as _rnd
+        self._knead_sub           = 'pour_onion'
+        self._knead_onion_x       = float(_KN_ONION_X)
+        self._knead_onion_grabbed = False
+        self._knead_arrows        = [_rnd.choice(_KN_DIRS) for _ in range(_KN_ARROW_N)]
+        self._knead_idx           = 0
+        self._knead_ref           = None
+        self._knead_prev_ang      = None
+        self._knead_rot_total     = 0.0
+        self._knead_mix_angle     = 0.0
+        # Precompute meat blob positions (polar, rotated by mix_angle each frame)
+        rng = np.random.default_rng(seed=42)
+        n = 88
+        self._kn_meat_r   = np.sqrt(rng.uniform(0.01, 0.88, n)) * (_KN_BOWL_RX - 28)
+        self._kn_meat_ang = rng.uniform(0, 2*math.pi, n)
+        self._kn_meat_w   = rng.integers(11, 26, n)
+        self._kn_meat_h   = rng.integers(7,  15, n)
+        self._kn_meat_rot = rng.uniform(0, math.pi, n)
+        # BGR meat colors: warm pink/salmon (R high, G mid, B low)
+        self._kn_meat_col = np.stack([
+            rng.integers(55, 82,  n),   # B
+            rng.integers(72, 112, n),   # G
+            rng.integers(155, 210, n),  # R  → RGB pink/salmon
+        ], axis=1)
+        # Precompute onion blob positions
+        rng2 = np.random.default_rng(seed=8)
+        m = 32
+        self._kn_onion_r   = rng2.uniform(0, 68, m)
+        self._kn_onion_ang = rng2.uniform(0, 2*math.pi, m)
+        self._kn_onion_w   = rng2.integers(14, 32, m)
+        self._kn_onion_h   = rng2.integers(9,  18, m)
+        self._kn_onion_rot = rng2.uniform(0, math.pi, m)
+        # BGR golden onion colors (R ~200-230, G ~150-185, B ~15-50)
+        self._kn_onion_col = np.stack([
+            rng2.integers(15, 50,  m),   # B
+            rng2.integers(145, 185, m),  # G
+            rng2.integers(190, 232, m),  # R  → RGB golden
+        ], axis=1)
+
+    def _do_knead(self, hands):
+        if self._knead_sub == 'pour_onion':
+            return self._do_knead_pour(hands)
+        elif self._knead_sub == 'arrows':
+            return self._do_knead_arrows(hands)
+        else:
+            return self._do_knead_rotate(hands)
+
+    def _do_knead_pour(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                if self._knead_onion_grabbed:
+                    self._knead_onion_grabbed = False
+                continue
+            hx = float(hand.screen_x)
+            hy = float(hand.screen_y)
+            if not self._knead_onion_grabbed:
+                if (hx - self._knead_onion_x)**2 + (hy - _KN_ONION_Y)**2 < 75**2:
+                    self._knead_onion_grabbed = True
+                continue
+            self._knead_onion_x = max(float(_KN_BOWL_CX + 50), min(hx, float(_KN_ONION_X)))
+            if self._knead_onion_x <= _KN_BOWL_CX + 80:
+                self._knead_onion_grabbed = False
+                self._knead_sub = 'arrows'
+                self._flash_event('NICE!', (80, 220, 140), 16)
+        return []
+
+    def _do_knead_arrows(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                self._knead_ref = None
+                continue
+            hx, hy = hand.screen_x, hand.screen_y
+            if self._knead_ref is None:
+                self._knead_ref = (hx, hy)
+                continue
+            dx = hx - self._knead_ref[0]
+            dy = hy - self._knead_ref[1]
+            target = self._knead_arrows[self._knead_idx]
+            matched = False
+            if target == 'up'    and dy < -_KN_SWIPE_PX and abs(dy) > abs(dx):
+                matched = True
+            elif target == 'down'  and dy >  _KN_SWIPE_PX and abs(dy) > abs(dx):
+                matched = True
+            elif target == 'left'  and dx < -_KN_SWIPE_PX and abs(dx) > abs(dy):
+                matched = True
+            elif target == 'right' and dx >  _KN_SWIPE_PX and abs(dx) > abs(dy):
+                matched = True
+            if matched:
+                self._knead_idx += 1
+                self._knead_ref = None
+                # Rotate mixture visually in swipe direction
+                if target in ('right', 'down'):
+                    self._knead_mix_angle += 0.45
+                else:
+                    self._knead_mix_angle -= 0.45
+                self._flash_event('NICE!', (100, 220, 255), 13)
+                if self._knead_idx >= _KN_ARROW_N:
+                    self._knead_sub       = 'rotate'
+                    self._knead_rot_total = 0.0
+                    self._knead_prev_ang  = None
+        return []
+
+    def _do_knead_rotate(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                self._knead_prev_ang = None
+                continue
+            hx = hand.screen_x - _KN_BOWL_CX
+            hy = hand.screen_y - _KN_BOWL_CY
+            if math.sqrt(hx*hx + hy*hy) < 55:
+                continue
+            angle = math.atan2(hy, hx)
+            if self._knead_prev_ang is not None:
+                delta = angle - self._knead_prev_ang
+                if delta >  math.pi: delta -= 2 * math.pi
+                if delta < -math.pi: delta += 2 * math.pi
+                if delta > 0:   # clockwise only
+                    self._knead_rot_total  += delta
+                    self._knead_mix_angle  += delta * 0.8
+                if self._knead_rot_total >= 2 * math.pi:
+                    self._knead_prev_ang = None
+                    self._phase = 'grab_spatula'
+                    return ['knead']
+            self._knead_prev_ang = angle
+        return []
+
+    def _draw_knead(self, frame):
+        t   = time.time()
+        cx, cy = _KN_BOWL_CX, _KN_BOWL_CY
+        rx, ry = _KN_BOWL_RX, _KN_BOWL_RY
+        mix = self._knead_mix_angle
+        sub = self._knead_sub
+
+        # ── Bowl shadow & body ────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx + 10, cy + 24), (rx - 12, 30), 0, 0, 360, (22, 20, 18), -1)
+        # Pale blue-gray ceramic bowl
+        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 360, (230, 215, 185), -1)
+        cv2.ellipse(frame, (cx, cy), (rx - 18, ry - 13), 0, 0, 360, (215, 200, 168), -1)
+
+        # ── Meat fill: 2~3 large ellipses rotating with mix_angle ────────────
+        # Fixed large blob definitions (offset angle, radius frac, size, color BGR)
+        meat_blobs = [
+            (0.0,   0.18,  145, 105,  (68, 82, 188)),   # large pink center-left
+            (2.1,   0.32,  120,  88,  (55, 70, 172)),   # large darker right
+            (4.4,   0.22,  100,  75,  (78, 95, 200)),   # medium lighter bottom
+        ]
+        for base_ang, r_frac, bw, bh, col in meat_blobs:
+            a  = base_ang + mix
+            r  = r_frac * (rx - 20)
+            fx = int(cx + math.cos(a) * r)
+            fy = int(cy + math.sin(a) * r * 0.76 + 10)
+            br = int(math.degrees(a))
+            cv2.ellipse(frame, (fx, fy), (bw, bh), br, 0, 360, col, -1)
+
+        # ── Golden onion blob (appears after pour, orbits & mixes) ───────────
+        if sub in ('arrows', 'rotate'):
+            # Onion center slowly migrates as mix_angle changes
+            ocx = cx + int(58 * math.cos(mix * 0.7 + 0.8))
+            ocy = cy + int(42 * math.sin(mix * 0.7 + 0.8) * 0.76) + 10
+            for i in range(len(self._kn_onion_r)):
+                a  = float(self._kn_onion_ang[i]) + mix * 1.1
+                r  = float(self._kn_onion_r[i])
+                fx = int(ocx + math.cos(a) * r)
+                fy = int(ocy + math.sin(a) * r * 0.82)
+                bw = int(self._kn_onion_w[i])
+                bh = int(self._kn_onion_h[i])
+                br = int(math.degrees(float(self._kn_onion_rot[i]) + mix))
+                col = tuple(int(c) for c in self._kn_onion_col[i])
+                cv2.ellipse(frame, (fx, fy), (bw, bh), br, 0, 360, col, -1)
+
+        # ── Bowl rim on top (hides overflowing blobs) ─────────────────────────
+        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 180, (230, 215, 185), 28)
+        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 180, (252, 245, 230), 4)
+        cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 180, 360, (175, 162, 135), 3)
+
+        # ── Pour onion sub-phase ──────────────────────────────────────────────
+        if sub == 'pour_onion':
+            ox = int(self._knead_onion_x)
+            oy = _KN_ONION_Y
+            # Pan shadow
+            cv2.ellipse(frame, (ox + 6, oy + 26), (58, 18), 0, 0, 360, (28, 24, 20), -1)
+            # Pan outer rim
+            cv2.ellipse(frame, (ox, oy), (62, 46), 0, 0, 360, (58, 54, 50), -1)
+            # Pan interior (dark iron surface)
+            cv2.ellipse(frame, (ox, oy), (50, 36), 0, 0, 360, (42, 52, 58), -1)
+            # Fried onion fill (golden, covers pan interior)
+            rng2 = np.random.default_rng(seed=5)
+            for _ in range(16):
+                fx = int(ox + rng2.integers(-38, 38))
+                fy = int(oy + rng2.integers(-24, 24))
+                w2 = int(rng2.integers(8, 17))
+                h2 = int(rng2.integers(4,  9))
+                # Golden onion BGR: (15-45, 140-180, 185-225)
+                gc = (int(rng2.integers(15, 45)),
+                      int(rng2.integers(140, 180)),
+                      int(rng2.integers(185, 225)))
+                cv2.ellipse(frame, (fx, fy), (w2, h2),
+                            int(rng2.integers(0, 180)), 0, 360, gc, -1)
+            # Pan handle
+            cv2.rectangle(frame, (ox + 60, oy - 8), (ox + 118, oy + 8), (50, 46, 42), -1)
+            cv2.rectangle(frame, (ox + 60, oy - 8), (ox + 118, oy + 8), (78, 74, 68), 2)
+            cv2.ellipse(frame, (ox, oy), (62, 46), 0, 0, 360, (82, 78, 74), 4)
+            if not self._knead_onion_grabbed:
+                _grab_ring(frame, [ox, oy])
+            cv2.arrowedLine(frame, (ox - 20, oy), (ox - 115, oy),
+                            (80, 220, 140), 3, tipLength=0.28)
+
+        # ── Arrow mini-game ───────────────────────────────────────────────────
+        elif sub == 'arrows':
+            if self._knead_idx < _KN_ARROW_N:
+                direction = self._knead_arrows[self._knead_idx]
+                pulse = int(8 * abs(math.sin(t * 5)))
+                _draw_dir_arrow(frame, cx, cy - 20, direction, 68 + pulse, (80, 220, 255))
+                for i in range(_KN_ARROW_N):
+                    dot_x = cx - (_KN_ARROW_N - 1) * 18 + i * 36
+                    col = (80, 220, 140) if i < self._knead_idx else (80, 80, 100)
+                    cv2.circle(frame, (dot_x, cy + ry + 36), 11, col, -1)
+                    cv2.circle(frame, (dot_x, cy + ry + 36), 11, (210, 218, 228), 2)
+
+        # ── Final clockwise rotation ──────────────────────────────────────────
+        elif sub == 'rotate':
+            prog = min(self._knead_rot_total / (2 * math.pi), 1.0)
+            arc  = int(prog * 360)
+            cv2.ellipse(frame, (cx, cy), (rx - 6, ry - 6),
+                        -90, 0, arc, (100, 240, 140), 6)
+            for ai in range(0, 300, 30):
+                a1 = math.radians(ai - 90)
+                a2 = math.radians(ai + 18 - 90)
+                p1 = (int(cx + (rx + 20) * math.cos(a1)), int(cy + (ry + 20) * math.sin(a1)))
+                p2 = (int(cx + (rx + 20) * math.cos(a2)), int(cy + (ry + 20) * math.sin(a2)))
+                cv2.line(frame, p1, p2, (255, 220, 80), 3)
+            _shadow_text(frame, 'TURN!', cx, cy, 1.4, (255, 230, 80), 3, center=True)
 
     # ── New Stage 1: Onion cutting ────────────────────────────────────────────
 
@@ -1686,6 +1987,29 @@ def _panel(frame, x, y, w, h, color=(15, 15, 15), alpha=0.6):
     bg  = np.empty_like(roi)
     bg[:] = color
     frame[y1:y2, x1:x2] = cv2.addWeighted(bg, alpha, roi, 1 - alpha, 0)
+
+
+def _draw_dir_arrow(frame, cx, cy, direction, size=65, color=(80, 220, 255)):
+    """Draw a filled directional arrow centered at (cx, cy)."""
+    s = size
+    h = s // 2   # shaft half-width
+    n = s // 4   # neck half-width
+    if direction == 'up':
+        pts = [(cx, cy - s), (cx - h, cy), (cx - n, cy), (cx - n, cy + s),
+               (cx + n, cy + s), (cx + n, cy), (cx + h, cy)]
+    elif direction == 'down':
+        pts = [(cx, cy + s), (cx + h, cy), (cx + n, cy), (cx + n, cy - s),
+               (cx - n, cy - s), (cx - n, cy), (cx - h, cy)]
+    elif direction == 'left':
+        pts = [(cx - s, cy), (cx, cy - h), (cx, cy - n), (cx + s, cy - n),
+               (cx + s, cy + n), (cx, cy + n), (cx, cy + h)]
+    else:  # right
+        pts = [(cx + s, cy), (cx, cy + h), (cx, cy + n), (cx - s, cy + n),
+               (cx - s, cy - n), (cx, cy - n), (cx, cy - h)]
+    arr = np.array(pts, dtype=np.int32)
+    cv2.fillPoly(frame, [arr + np.array([3, 4])], (20, 18, 16))   # shadow
+    cv2.fillPoly(frame, [arr], color)
+    cv2.polylines(frame, [arr], True, (255, 255, 255), 2)
 
 
 def _draw_spatula(frame, cx, cy):
