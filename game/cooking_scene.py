@@ -62,15 +62,34 @@ _BOWL_COLLECT_X   = 350   # pieces passing this x line are "in the bowl"
 # ── Onion Fry (between Stage 1 and Stage 2) ──────────────────────────────────
 ONION_PAN_CX  = 640
 ONION_PAN_CY  = 385
-ONION_PAN_R   = 295   # outer rim radius
-ONION_AREA_R  = 248   # inner cooking surface
-ONION_COUNT   = 26
-ONION_COOK_DUR = 10.0  # seconds to fully cook
+ONION_PAN_R   = 236   # outer rim radius (295 * 0.8)
+ONION_AREA_R  = 198   # inner cooking surface (248 * 0.8)
+ONION_COUNT   = 52
+ONION_STIR_NEEDED = 3600.0  # total stir units needed to reach ONION_READY
 ONION_READY   = 0.60   # flame button activates at this fraction
 ONION_INFL_R  = 125    # hand influence radius (px)
 _FLAME_BTN_CX = 105
 _FLAME_BTN_CY = 610
 _FLAME_BTN_R  = 55
+
+# ── Meat Grinder ─────────────────────────────────────────────────────────────
+MEAT_MIX_TARGET  = 5      # crank rotations to complete
+_GR_CX           = 680
+_GR_CY           = 370
+_GR_W            = 340    # body total width
+_GR_H            = 220    # body total height
+_GR_HANDLE_CX    = _GR_CX + _GR_W // 2 + 30
+_GR_HANDLE_CY    = _GR_CY
+_GR_HANDLE_ARM   = 88
+_GR_NOZZLE_X     = _GR_CX - _GR_W // 2 - 30
+_GR_NOZZLE_Y     = _GR_CY + 35
+_GR_BOWL_CX      = _GR_NOZZLE_X - 50
+_GR_BOWL_CY      = _GR_CY + _GR_H // 2 + 100
+_GR_HOPPER_CX    = _GR_CX
+_GR_HOPPER_Y     = _GR_CY - _GR_H // 2 - 55
+_GR_BEEF_Y0      = 115
+_GR_BEEF_DROP_Y  = _GR_HOPPER_Y + 45
+_GR_GRAB_R       = 68
 
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
@@ -100,6 +119,7 @@ _PHASE_HINTS = {
     # 'chopping':    ('Chop UP and DOWN!',(0, 255, 180)),
     'pepper_splitting': ('',                            (0, 255, 100)),
     'onion_fry':        ('Stir  then  turn  off  flame!', (0, 230, 160)),
+    'meat_mix':         ('Grab  beef  →  drop  in  grinder!', (100, 180, 255)),
     'grab_spatula':     ('GRAB the spatula!',           (0, 200, 255)),
     'stirring':         ('Stir in CIRCLES!',        (0, 255, 180)),
     'grab_pan':         ('GRAB the pan!',           (0, 200, 255)),
@@ -142,7 +162,7 @@ class CookingScene(BaseMiniGame):
         self._bd_piece_avel = []    # angular velocity per piece
         self._bd_in_bowl    = []    # bool per piece
         self._bd_prev_knife = None  # previous knife pos for velocity delta
-        self._bowl_knife_pos  = [_PIECES_CX - 60, _PIECES_CY - 20]
+        self._bowl_knife_pos  = [_PIECES_CX + 120, _PIECES_CY - 20]
         self._bowl_knife_hand = -1
 
         # chop detection: screen-coordinate based (kept for old stage, unused)
@@ -195,9 +215,21 @@ class CookingScene(BaseMiniGame):
         self._onion_ang   = None
         self._onion_avel  = None
         self._onion_cook  = 0.0    # 0→1
-        self._onion_start = None
         self._flame_on    = True
         self._prev_hand_onion = None
+        self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
+        self._fry_spatula_hand = -1
+
+        # Meat grinder state
+        self._meat_sub_phase      = 'load_beef'
+        self._meat_beef_y         = float(_GR_BEEF_Y0)
+        self._meat_beef_grabbed   = False
+        self._meat_handle_ang     = -math.pi / 2
+        self._meat_handle_grabbed = False
+        self._meat_prev_ang       = None
+        self._meat_total_ang      = 0.0
+        self.meat_stirs           = 0
+        self._meat_strand_count   = 0
 
     # ── BaseMiniGame interface ────────────────────────────────────────────────
 
@@ -222,6 +254,7 @@ class CookingScene(BaseMiniGame):
             if self._onion_cook < ONION_READY:
                 return f'Frying onions...  {pct}%'
             return 'Grab the flame button!'
+        if p == 'meat_mix':         return f'Mix meat  {self.meat_stirs}/{MEAT_MIX_TARGET}'
         if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
         if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
         if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
@@ -266,6 +299,9 @@ class CookingScene(BaseMiniGame):
 
         elif p == 'onion_fry':
             self._update_onion_fry(hands)
+
+        elif p == 'meat_mix':
+            events += self._do_meat_mix(hands)
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -497,6 +533,8 @@ class CookingScene(BaseMiniGame):
         #     self._draw_stage1(frame)
         elif p == 'onion_fry':
             self._draw_onion_fry(frame)
+        elif p == 'meat_mix':
+            self._draw_meat_mix(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
         else:
@@ -668,9 +706,17 @@ class CookingScene(BaseMiniGame):
 
         if p in ('pepper_splitting', 'onion_fry'):
             if p == 'onion_fry':
-                if self._onion_cook < ONION_READY:
-                    # Gripped hand stirring in circles around the pan
-                    r  = 165
+                if self._fry_spatula_hand == -1:
+                    # Show: approach and grab spatula
+                    wave = (math.sin(t * 1.8) + 1) / 2
+                    off  = int(60 * wave)
+                    _demo_fist(frame,
+                               self._fry_spatula_pos[0] - 100 + off,
+                               self._fry_spatula_pos[1] - 20,
+                               openness=1.0 - wave)
+                elif self._onion_cook < ONION_READY:
+                    # Spatula held — stir in circles
+                    r  = 145
                     dx = int(ONION_PAN_CX + r * math.cos(t * 1.6))
                     dy = int(ONION_PAN_CY + r * math.sin(t * 1.6))
                     _demo_fist(frame, dx, dy, openness=0.0)
@@ -706,6 +752,22 @@ class CookingScene(BaseMiniGame):
             grip = 1.0 - wave
             _demo_fist(frame, self._spatula_pos[0] - 110 + off,
                        self._spatula_pos[1] - 20, openness=grip)
+
+        elif p == 'meat_mix':
+            if self._meat_sub_phase == 'load_beef':
+                # Show hand grabbing beef and moving down
+                wave = (math.sin(t * 1.6) + 1) / 2
+                by   = int(_GR_BEEF_Y0 + (_GR_BEEF_DROP_Y - _GR_BEEF_Y0) * wave)
+                _demo_fist(frame, _GR_HOPPER_CX - 80, by, openness=1.0 - wave)
+                cv2.arrowedLine(frame, (_GR_HOPPER_CX - 80, by - 40),
+                                (_GR_HOPPER_CX - 80, by + 40),
+                                (80, 200, 130), 2, tipLength=0.4)
+            else:
+                # Show hand rotating around handle
+                r  = _GR_HANDLE_ARM + 10
+                dx = int(_GR_HANDLE_CX + r * math.cos(t * 2.5))
+                dy = int(_GR_HANDLE_CY + r * math.sin(t * 2.5))
+                _demo_fist(frame, dx, dy, openness=0.0)
 
         elif p == 'stirring':
             # Fist orbiting the pot clockwise
@@ -748,35 +810,61 @@ class CookingScene(BaseMiniGame):
         self._onion_vel  = np.zeros((ONION_COUNT, 2))
         self._onion_ang  = rng.uniform(0, 2 * np.pi, ONION_COUNT)
         self._onion_avel = np.zeros(ONION_COUNT)
-        self._onion_cook = 0.0
-        self._onion_start = None
+        self._onion_cook  = 0.0
         self._flame_on    = True
         self._prev_hand_onion = None
+        self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
+        self._fry_spatula_hand = -1
 
     def _update_onion_fry(self, hands):
-        now = time.time()
-        if self._onion_start is None:
-            self._onion_start = now
-        self._onion_cook = min((now - self._onion_start) / ONION_COOK_DUR, 1.0)
+        _SPATULA_GRAB_R = 70
 
-        has_gripped = False
-        for hand in hands:
-            if not hand.detected or not hand.gripped:
+        has_spatula = self._fry_spatula_hand != -1
+
+        for i, hand in enumerate(hands):
+            if not hand.detected:
+                if self._fry_spatula_hand == i:
+                    self._fry_spatula_hand = -1
+                    has_spatula = False
                 continue
-            has_gripped = True
+
             hx = float(hand.screen_x)
             hy = float(hand.screen_y)
 
-            # Flame button: grip over it when ready → done
-            if self._onion_cook >= ONION_READY:
+            # Flame button: grip over it when ready (spatula not required)
+            if hand.gripped and self._onion_cook >= ONION_READY:
                 bdx = hx - _FLAME_BTN_CX
                 bdy = hy - _FLAME_BTN_CY
                 if bdx * bdx + bdy * bdy < (_FLAME_BTN_R + 22) ** 2:
                     self._flame_on = False
-                    self._phase    = 'grab_spatula'
+                    self._phase    = 'meat_mix'
+                    self._init_meat_mix()
                     return
 
-            # Stir: apply impulse to nearby pieces
+            # Pick up spatula
+            if not has_spatula:
+                if hand.gripped:
+                    sx, sy = self._fry_spatula_pos
+                    if (hx - sx)**2 + (hy - sy)**2 < _SPATULA_GRAB_R**2:
+                        self._fry_spatula_hand = i
+                        has_spatula = True
+                continue
+
+            if self._fry_spatula_hand != i:
+                continue
+
+            # Drop spatula when not gripped
+            if not hand.gripped:
+                self._fry_spatula_hand = -1
+                has_spatula = False
+                self._prev_hand_onion = None
+                continue
+
+            # Spatula follows hand
+            self._fry_spatula_pos[0] = hx
+            self._fry_spatula_pos[1] = hy
+
+            # Stir: impulse based on spatula movement
             if self._prev_hand_onion is not None:
                 dhx = (hx - self._prev_hand_onion[0]) * 0.55
                 dhy = (hy - self._prev_hand_onion[1]) * 0.55
@@ -785,8 +873,10 @@ class CookingScene(BaseMiniGame):
             self._prev_hand_onion = (hx, hy)
 
             if abs(dhx) + abs(dhy) > 0.8:
-                dx   = self._onion_pos[:, 0] - hx
-                dy   = self._onion_pos[:, 1] - hy
+                sx_pos = float(self._fry_spatula_pos[0])
+                sy_pos = float(self._fry_spatula_pos[1])
+                dx   = self._onion_pos[:, 0] - sx_pos
+                dy   = self._onion_pos[:, 1] - sy_pos
                 dist = np.sqrt(dx * dx + dy * dy) + 1e-6
                 mask = dist < ONION_INFL_R
                 if mask.any():
@@ -794,8 +884,10 @@ class CookingScene(BaseMiniGame):
                     self._onion_vel[mask, 0] += dhx * fall
                     self._onion_vel[mask, 1] += dhy * fall
                     self._onion_avel[mask]   += np.random.uniform(-0.18, 0.18, mask.sum())
+                    stir_amount = (abs(dhx) + abs(dhy)) * mask.sum() / ONION_COUNT
+                    self._onion_cook = min(self._onion_cook + stir_amount / ONION_STIR_NEEDED, 1.0)
 
-        if not has_gripped:
+        if not has_spatula:
             self._prev_hand_onion = None
 
         # Physics: friction + integrate
@@ -845,8 +937,9 @@ class CookingScene(BaseMiniGame):
 
         # ── Flames ───────────────────────────────────────────────────────────
         if self._flame_on:
-            for fi in range(9):
-                fx   = cx - 190 + fi * 48
+            flame_span = int(ONION_PAN_R * 1.6)
+            for fi in range(8):
+                fx   = cx - flame_span // 2 + fi * (flame_span // 7)
                 flk  = int(14 * math.sin(t * 9.5 + fi * 1.3))
                 fy0  = cy + ONION_PAN_R + 6
                 # Blue core
@@ -911,6 +1004,215 @@ class CookingScene(BaseMiniGame):
                      _FLAME_BTN_CX, _FLAME_BTN_CY + _FLAME_BTN_R + 24,
                      0.62, (255, 255, 255) if ready else (160, 160, 180),
                      1, center=True)
+
+        # ── Spatula ───────────────────────────────────────────────────────────
+        sx = int(self._fry_spatula_pos[0])
+        sy = int(self._fry_spatula_pos[1])
+        _draw_spatula(frame, sx, sy)
+        if self._fry_spatula_hand == -1:
+            _grab_ring(frame, self._fry_spatula_pos)
+
+    # ── Meat Grinder ─────────────────────────────────────────────────────────
+
+    def _init_meat_mix(self):
+        self._meat_sub_phase      = 'load_beef'
+        self._meat_beef_y         = float(_GR_BEEF_Y0)
+        self._meat_beef_grabbed   = False
+        self._meat_handle_ang     = -math.pi / 2
+        self._meat_handle_grabbed = False
+        self._meat_prev_ang       = None
+        self._meat_total_ang      = 0.0
+        self.meat_stirs           = 0
+        self._meat_strand_count   = 0
+
+    def _do_meat_mix(self, hands):
+        if self._meat_sub_phase == 'load_beef':
+            return self._do_meat_load(hands)
+        return self._do_meat_grind(hands)
+
+    def _do_meat_load(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                if self._meat_beef_grabbed:
+                    self._meat_beef_grabbed = False
+                continue
+            hx, hy = hand.screen_x, hand.screen_y
+            if not self._meat_beef_grabbed:
+                bx = _GR_HOPPER_CX
+                by = int(self._meat_beef_y)
+                if (hx - bx)**2 + (hy - by)**2 < _GR_GRAB_R**2:
+                    self._meat_beef_grabbed = True
+                continue
+            # Beef follows hand vertically, clamped to hopper entry
+            self._meat_beef_y = float(min(hy, float(_GR_BEEF_DROP_Y)))
+            if self._meat_beef_y >= _GR_BEEF_DROP_Y:
+                self._meat_beef_grabbed = False
+                self._meat_sub_phase    = 'grind'
+                self._flash_event('GRIND!', (80, 200, 130), 16)
+        return []
+
+    def _do_meat_grind(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                if self._meat_handle_grabbed:
+                    self._meat_handle_grabbed = False
+                    self._meat_prev_ang = None
+                continue
+            hx = float(hand.screen_x)
+            hy = float(hand.screen_y)
+            if not self._meat_handle_grabbed:
+                tip_x = int(_GR_HANDLE_CX + math.cos(self._meat_handle_ang) * _GR_HANDLE_ARM)
+                tip_y = int(_GR_HANDLE_CY + math.sin(self._meat_handle_ang) * _GR_HANDLE_ARM)
+                if (hx - tip_x)**2 + (hy - tip_y)**2 < _GR_GRAB_R**2:
+                    self._meat_handle_grabbed = True
+                continue
+            dx = hx - _GR_HANDLE_CX
+            dy = hy - _GR_HANDLE_CY
+            if math.sqrt(dx*dx + dy*dy) < 28:
+                continue
+            angle = math.atan2(dy, dx)
+            self._meat_handle_ang = angle
+            if self._meat_prev_ang is not None:
+                delta = angle - self._meat_prev_ang
+                if delta >  math.pi: delta -= 2 * math.pi
+                if delta < -math.pi: delta += 2 * math.pi
+                self._meat_total_ang += delta
+                new_stirs = int(abs(self._meat_total_ang) / (2 * math.pi))
+                if new_stirs > self.meat_stirs:
+                    self.meat_stirs = new_stirs
+                    self._meat_strand_count = self.meat_stirs * 14
+                    self._flash_event('GRIND!', (80, 180, 240), 14)
+                    if self.meat_stirs >= MEAT_MIX_TARGET:
+                        self._meat_prev_ang = None
+                        self._phase = 'grab_spatula'
+                        return ['mix']
+            self._meat_prev_ang = angle
+        return []
+
+    def _draw_meat_mix(self, frame):
+        t = time.time()
+        gx1 = _GR_CX - _GR_W // 2
+        gx2 = _GR_CX + _GR_W // 2
+        gy1 = _GR_CY - _GR_H // 2
+        gy2 = _GR_CY + _GR_H // 2
+
+        # ── Grinder body ─────────────────────────────────────────────────────
+        # Shadow
+        cv2.rectangle(frame, (gx1 + 9, gy1 + 9), (gx2 + 9, gy2 + 9), (25, 22, 20), -1)
+        # Main face
+        cv2.rectangle(frame, (gx1, gy1), (gx2, gy2), (82, 78, 74), -1)
+        # Top bevel face
+        top_pts = np.array([(gx1, gy1), (gx2, gy1),
+                             (gx2 - 18, gy1 - 16), (gx1 - 18, gy1 - 16)], np.int32)
+        cv2.fillPoly(frame, [top_pts], (118, 114, 110))
+        # Right bevel face
+        rgt_pts = np.array([(gx2, gy1), (gx2, gy2),
+                             (gx2 - 18, gy2 - 16), (gx2 - 18, gy1 - 16)], np.int32)
+        cv2.fillPoly(frame, [rgt_pts], (60, 57, 53))
+        # Edge highlight
+        cv2.rectangle(frame, (gx1, gy1), (gx2, gy2), (145, 140, 135), 3)
+        # Control panel buttons
+        px1, py1 = gx2 - 72, gy1 + 28
+        cv2.rectangle(frame, (px1, py1), (px1 + 48, py1 + 92), (48, 45, 42), -1)
+        cv2.rectangle(frame, (px1 + 7, py1 + 10), (px1 + 39, py1 + 32), (40, 200, 100), -1)
+        cv2.rectangle(frame, (px1 + 7, py1 + 44), (px1 + 39, py1 + 66), (70, 70, 80), -1)
+
+        # ── Hopper (top tray) ────────────────────────────────────────────────
+        hpx1 = _GR_HOPPER_CX - 115
+        hpx2 = _GR_HOPPER_CX + 115
+        hpy1 = _GR_HOPPER_Y - 44
+        hpy2 = _GR_HOPPER_Y + 8
+        cv2.rectangle(frame, (hpx1, hpy1), (hpx2, hpy2), (182, 188, 194), -1)
+        cv2.rectangle(frame, (hpx1, hpy1), (hpx2, hpy2), (220, 226, 232), 3)
+        # Funnel from hopper to body
+        fn_pts = np.array([(hpx1 + 28, hpy2), (hpx2 - 28, hpy2),
+                            (gx1 + 138, gy1), (gx1 + 75, gy1)], np.int32)
+        cv2.fillPoly(frame, [fn_pts], (155, 162, 168))
+        cv2.polylines(frame, [fn_pts], True, (195, 200, 208), 2)
+
+        # ── Raw beef in hopper (load_beef sub-phase) ─────────────────────────
+        if self._meat_sub_phase == 'load_beef':
+            bx = _GR_HOPPER_CX
+            by = int(self._meat_beef_y)
+            beef_pts = np.array([
+                (bx - 52, by - 28), (bx + 52, by - 28),
+                (bx + 62, by + 4),  (bx + 44, by + 28),
+                (bx - 44, by + 28), (bx - 62, by + 4),
+            ], np.int32)
+            cv2.fillPoly(frame, [beef_pts + np.array([[3, 4]])], (35, 42, 105))
+            cv2.fillPoly(frame, [beef_pts], (68, 82, 188))
+            # Marbling streaks
+            cv2.ellipse(frame, (bx - 18, by - 6), (22, 8), 15, 0, 360, (115, 128, 220), -1)
+            cv2.ellipse(frame, (bx + 22, by + 8), (16, 6), -20, 0, 360, (115, 128, 220), -1)
+            cv2.polylines(frame, [beef_pts], True, (48, 58, 148), 2)
+            if not self._meat_beef_grabbed:
+                _grab_ring(frame, [bx, by])
+
+        # ── Output nozzle (left side) ─────────────────────────────────────────
+        nx, ny = _GR_NOZZLE_X, _GR_NOZZLE_Y
+        # Cylinder tube
+        cv2.rectangle(frame, (nx - 8, ny - 16), (nx + 28, ny + 16), (145, 150, 155), -1)
+        cv2.rectangle(frame, (nx - 8, ny - 16), (nx + 28, ny + 16), (185, 190, 195), 2)
+        # Die plate (disc with holes)
+        cv2.circle(frame, (nx + 28, ny), 34, (170, 176, 182), -1)
+        cv2.circle(frame, (nx + 28, ny), 34, (210, 216, 222), 3)
+        for hoff in [(-10,-10),(0,-14),(10,-10),(-14,0),(0,0),(14,0),(-10,10),(0,14),(10,10)]:
+            cv2.circle(frame, (nx + 28 + hoff[0], ny + hoff[1]), 4, (48, 45, 42), -1)
+
+        # ── Ground meat strands ───────────────────────────────────────────────
+        n_strands = self._meat_strand_count
+        if n_strands > 0:
+            rng2 = np.random.default_rng(seed=13)
+            for s in range(min(n_strands, 70)):
+                ox  = int(rng2.integers(-18, 10))
+                wave_off = s * 0.65 - t * 3.0
+                pts_list = []
+                x0 = nx + ox
+                y0 = ny + 18
+                for seg in range(10):
+                    ys = y0 + seg * 16
+                    xs = x0 + int(11 * math.sin(wave_off + seg * 1.1)) - seg * 2
+                    if ys > _GR_BOWL_CY + 50:
+                        break
+                    pts_list.append((xs, ys))
+                if len(pts_list) >= 2:
+                    r_c = 80 + (s % 4) * 8
+                    g_c = 92 + (s % 3) * 7
+                    b_c = 188 + (s % 5) * 5
+                    cv2.polylines(frame, [np.array(pts_list, np.int32)],
+                                  False, (r_c, g_c, b_c), 3)
+
+        # ── Collection bowl ───────────────────────────────────────────────────
+        bcx, bcy = _GR_BOWL_CX, _GR_BOWL_CY
+        cv2.ellipse(frame, (bcx + 8, bcy + 22), (85, 28), 0, 0, 360, (22, 20, 18), -1)
+        cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 0, 180, (208, 214, 222), -1)
+        if n_strands > 12:
+            fill_h = min(int((n_strands - 12) * 1.8), 38)
+            cv2.ellipse(frame, (bcx, bcy - 8), (78, max(4, fill_h // 2)),
+                        0, 0, 360, (85, 100, 195), -1)
+        cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 180, 360, (208, 214, 222), -1)
+        cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 0, 360, (235, 240, 248), 4)
+
+        # ── Crank handle (grind sub-phase) ────────────────────────────────────
+        if self._meat_sub_phase == 'grind':
+            arm_ang = self._meat_handle_ang
+            tip_x = int(_GR_HANDLE_CX + math.cos(arm_ang) * _GR_HANDLE_ARM)
+            tip_y = int(_GR_HANDLE_CY + math.sin(arm_ang) * _GR_HANDLE_ARM)
+            # Axle
+            cv2.circle(frame, (_GR_HANDLE_CX, _GR_HANDLE_CY), 16, (150, 155, 160), -1)
+            cv2.circle(frame, (_GR_HANDLE_CX, _GR_HANDLE_CY), 16, (205, 210, 215), 3)
+            # Arm bar
+            cv2.line(frame, (_GR_HANDLE_CX, _GR_HANDLE_CY), (tip_x, tip_y), (148, 153, 158), 11)
+            cv2.line(frame, (_GR_HANDLE_CX, _GR_HANDLE_CY), (tip_x, tip_y), (195, 200, 206), 5)
+            # Grip knob (wood-brown)
+            cv2.circle(frame, (tip_x, tip_y), 17, (55, 95, 140), -1)
+            cv2.circle(frame, (tip_x, tip_y), 17, (80, 120, 165), 3)
+            if not self._meat_handle_grabbed:
+                _grab_ring(frame, [tip_x, tip_y])
+            # Rotation counter
+            _shadow_text(frame, f'{self.meat_stirs}/{MEAT_MIX_TARGET}',
+                         _GR_HANDLE_CX, _GR_HANDLE_CY + _GR_HANDLE_ARM + 50,
+                         1.0, (255, 230, 100), 2, center=True)
 
     # ── New Stage 1: Onion cutting ────────────────────────────────────────────
 
@@ -1073,7 +1375,7 @@ class CookingScene(BaseMiniGame):
             self._bd_piece_avel.append(0.0)
             self._bd_in_bowl.append(False)
         self._bd_prev_knife  = None
-        self._bowl_knife_pos  = [_PIECES_CX - 60, _PIECES_CY - 20]
+        self._bowl_knife_pos  = [_PIECES_CX + 120, _PIECES_CY - 20]
         self._bowl_knife_hand = -1
 
     def _do_bowl_drop(self, hands):
@@ -1211,17 +1513,38 @@ class CookingScene(BaseMiniGame):
         p  = self._phase
         fw = frame.shape[1]
 
-        # Large cutting board (fills bottom half)
+        fh = frame.shape[0]
         board_top = 345
-        cv2.rectangle(frame, (0, board_top), (fw, frame.shape[0]),
-                      (50, 108, 40), -1)
-        for gx in range(0, fw, 115):
-            cv2.line(frame, (gx, board_top), (gx, frame.shape[0]),
-                     (40, 92, 32), 1)
-        cv2.line(frame, (0, board_top), (fw, board_top), (30, 76, 24), 4)
 
-        # Onion body — hidden in bowl_drop (only pieces visible then)
-        if p != 'bowl_drop':
+        # Floor background — warm orange/wood tone with horizontal grain
+        cv2.rectangle(frame, (0, board_top), (fw, fh), (55, 130, 210), -1)
+        for gy in range(board_top + 20, fh, 30):
+            cv2.line(frame, (0, gy), (fw, gy), (45, 115, 195), 1)
+        cv2.line(frame, (0, board_top), (fw, board_top), (35, 100, 178), 3)
+
+        if p == 'bowl_drop':
+            # bowl_drop: only right-side cutting board (left area is open floor for bowl)
+            bx, by = 460, board_top + 12
+            bw, bh = fw - bx - 30, fh - by - 12
+            cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (235, 242, 248), -1)
+            cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (180, 195, 210), 3)
+            # Hanging hole on right edge
+            cv2.ellipse(frame, (bx + bw - 28, by + bh // 2),
+                        (10, 28), 0, 0, 360, (180, 195, 210), -1)
+
+            # Bowl on the LEFT side
+            self._draw_bowl_right(frame)
+        else:
+            # place_onion / peel_skin / slice_onion: full cutting board across bottom
+            cb_x1, cb_y1 = 80, board_top + 12
+            cb_x2, cb_y2 = fw - 80, fh - 12
+            cv2.rectangle(frame, (cb_x1, cb_y1), (cb_x2, cb_y2), (235, 242, 248), -1)
+            cv2.rectangle(frame, (cb_x1, cb_y1), (cb_x2, cb_y2), (180, 195, 210), 3)
+            # Hanging hole on right edge
+            cv2.ellipse(frame, (cb_x2 - 28, (cb_y1 + cb_y2) // 2),
+                        (10, 28), 0, 0, 360, (180, 195, 210), -1)
+
+            # Onion body
             onion_cx  = fw // 2
             onion_cy  = int(self._onb_y) if p == 'place_onion' else _ONB_BOARD_Y
             peel_frac = min(self._peel_done / _PEEL_NEEDED, 1.0)
@@ -1236,21 +1559,8 @@ class CookingScene(BaseMiniGame):
             if self._slice_knife_hand == -1:
                 _grab_ring(frame, self._slice_knife_pos)
 
-        # Bowl + pieces + knife (bowl_drop phase)
+        # Pieces + knife (bowl_drop phase)
         if p == 'bowl_drop':
-            # Draw a prominent cutting board on the right side
-            bx, by = 460, 340
-            bw, bh = 780, 280
-            cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (52, 112, 42), -1)
-            cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (32, 80, 24), 4)
-            for gx in range(bx, bx + bw, 100):
-                cv2.line(frame, (gx, by), (gx, by + bh), (42, 95, 34), 1)
-            # Board label hole
-            cv2.ellipse(frame, (bx + bw - 55, by + bh // 2),
-                        (12, 36), 0, 0, 360, (32, 80, 24), -1)
-
-            # Bowl on the LEFT side
-            self._draw_bowl_right(frame)
 
             # Individual piece objects at their physics positions
             for i in range(len(self._bd_piece_pos)):
@@ -1376,6 +1686,32 @@ def _panel(frame, x, y, w, h, color=(15, 15, 15), alpha=0.6):
     bg  = np.empty_like(roi)
     bg[:] = color
     frame[y1:y2, x1:x2] = cv2.addWeighted(bg, alpha, roi, 1 - alpha, 0)
+
+
+def _draw_spatula(frame, cx, cy):
+    """Draw a wooden spatula centered at (cx, cy), pointing upward."""
+    cx, cy = int(cx), int(cy)
+    # Handle (dark wood brown rectangle)
+    hw, hh = 10, 70
+    cv2.rectangle(frame, (cx - hw, cy - hh), (cx + hw, cy + hh),
+                  (25, 80, 130), -1)
+    cv2.rectangle(frame, (cx - hw, cy - hh), (cx + hw, cy + hh),
+                  (15, 55, 90), 2)
+    # Wood grain lines on handle
+    for gy in range(cy - hh + 8, cy + hh, 14):
+        cv2.line(frame, (cx - hw + 2, gy), (cx + hw - 2, gy), (35, 100, 155), 1)
+    # Paddle head (wider, rounded rectangle)
+    pw, ph = 30, 40
+    cv2.rectangle(frame, (cx - pw, cy - hh - ph), (cx + pw, cy - hh + 8),
+                  (25, 80, 130), -1)
+    cv2.rectangle(frame, (cx - pw, cy - hh - ph), (cx + pw, cy - hh + 8),
+                  (15, 55, 90), 2)
+    # Holes in paddle (classic spatula look)
+    for hy_off in (-ph // 2 - 4, -ph // 4 - 2):
+        cv2.circle(frame, (cx, cy - hh + hy_off), 5, (15, 55, 90), -1)
+    # Grip band at top of handle
+    cv2.rectangle(frame, (cx - hw - 2, cy - hh - 6), (cx + hw + 2, cy - hh + 6),
+                  (18, 60, 100), -1)
 
 
 def _demo_fist(frame, cx, cy, size=58, openness=0.0):
