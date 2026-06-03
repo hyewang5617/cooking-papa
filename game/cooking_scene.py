@@ -50,11 +50,14 @@ _SLICE_NEEDED   = 4       # slice strokes required
 _SLICE_PX       = 52      # px threshold per slice
 _SLICE_KNIFE_X  = 370     # knife resting x on board (left of onion)
 _SLICE_KNIFE_Y  = 415     # knife resting y
-_BOWL_TRIPS   = 2       # carry trips to bowl
-_BOWL2_CX     = 900     # bowl center x
-_BOWL2_CY     = 415     # bowl center y
-_PIECES_CX    = 390     # sliced pieces center x
-_PIECES_CY    = 430     # sliced pieces center y
+_BOWL2_CX        = 200    # bowl center x  (LEFT)
+_BOWL2_CY        = 430    # bowl center y
+_PIECES_CX       = 800    # initial pieces center x (RIGHT, on cutting board)
+_PIECES_CY       = 430    # initial pieces center y
+_BOWL_PIECE_COUNT = 12    # number of onion piece objects
+_BOWL_PIECE_GOAL  = 8     # pieces needed in bowl to complete
+_KNIFE_PUSH_R     = 80    # px — knife push interaction radius
+_BOWL_COLLECT_X   = 350   # pieces passing this x line are "in the bowl"
 
 # ── Onion Fry (between Stage 1 and Stage 2) ──────────────────────────────────
 ONION_PAN_CX  = 640
@@ -123,6 +126,7 @@ class CookingScene(BaseMiniGame):
 
         # ── New Stage 1 state ─────────────────────────────────────────────
         self._onb_y       = float(_ONB_START_Y)  # onion y during place phase
+        self._onb_grabbed = False               # True once player grips the onion
         self._peel_done   = 0
         self._peel_ref_x  = None
         self._peel_dir    = None     # 'left' | 'right' | None
@@ -131,9 +135,15 @@ class CookingScene(BaseMiniGame):
         self._slice_dir        = None       # 'up' | 'down' | None
         self._slice_knife_pos  = [_SLICE_KNIFE_X, _SLICE_KNIFE_Y]
         self._slice_knife_hand = -1         # index of hand holding knife, -1 = none
-        self._bowl_count  = 0
-        self._carrying    = False
-        self._carry_xy    = (0, 0)
+        # Bowl-drop piece physics
+        self._bd_piece_pos  = []    # [[x,y], ...]
+        self._bd_piece_vel  = []    # [[vx,vy], ...]
+        self._bd_piece_ang  = []    # rotation angle per piece
+        self._bd_piece_avel = []    # angular velocity per piece
+        self._bd_in_bowl    = []    # bool per piece
+        self._bd_prev_knife = None  # previous knife pos for velocity delta
+        self._bowl_knife_pos  = [_PIECES_CX - 60, _PIECES_CY - 20]
+        self._bowl_knife_hand = -1
 
         # chop detection: screen-coordinate based (kept for old stage, unused)
         self._chop_ref_y = None
@@ -201,7 +211,9 @@ class CookingScene(BaseMiniGame):
         if p == 'place_onion':  return 'Step 1  —  Place the onion!'
         if p == 'peel_skin':    return f'Step 1  —  Peel  {self._peel_done}/{_PEEL_NEEDED}'
         if p == 'slice_onion':  return f'Step 1  —  Slice  {self._slice_done}/{_SLICE_NEEDED}'
-        if p == 'bowl_drop':    return f'Step 1  —  Bowl  {self._bowl_count}/{_BOWL_TRIPS}'
+        if p == 'bowl_drop':
+            n_in = sum(self._bd_in_bowl) if self._bd_in_bowl else 0
+            return f'Step 1  —  Bowl  {n_in}/{_BOWL_PIECE_GOAL}'
         # if p == 'grab_knife': return 'Step 1/3  —  Grab the knife!'    # old
         # if p == 'chopping':   return ...                                # old
         if p == 'pepper_splitting': return 'Step 1/3  —  Nice cut!'
@@ -636,10 +648,22 @@ class CookingScene(BaseMiniGame):
                                 (0, 230, 180), 2, tipLength=0.4)
             return
         elif p == 'bowl_drop':
-            # Hand moves from pieces to bowl
-            wave = (math.sin(t * 1.2) + 1) / 2
-            dx = int(_PIECES_CX + (_BOWL2_CX - _PIECES_CX) * wave)
-            _demo_fist(frame, dx, _PIECES_CY, openness=0.0)
+            if self._bowl_knife_hand == -1:
+                # Demo: approach the knife near pieces
+                wave = (math.sin(t * 1.8) + 1) / 2
+                off  = int(60 * wave)
+                _demo_fist(frame,
+                           self._bowl_knife_pos[0] - 90 + off,
+                           self._bowl_knife_pos[1] - 15,
+                           openness=1.0 - wave)
+            else:
+                # Demo: sweep from right (board/pieces) toward left (bowl)
+                wave = (math.sin(t * 1.2) + 1) / 2
+                dx = int(_PIECES_CX - (_PIECES_CX - _BOWL2_CX) * wave)
+                _demo_fist(frame, dx, _PIECES_CY, openness=0.0)
+                cv2.arrowedLine(frame, (dx, _PIECES_CY - 10),
+                                (dx - 80, _PIECES_CY - 10),
+                                (255, 200, 50), 2, tipLength=0.35)
             return
 
         if p in ('pepper_splitting', 'onion_fry'):
@@ -893,13 +917,26 @@ class CookingScene(BaseMiniGame):
     def _do_place_onion(self, hands):
         for hand in hands:
             if not hand.detected or not hand.gripped:
-                continue
+                if not self._onb_grabbed:
+                    continue
+                else:
+                    self._onb_grabbed = False   # dropped
+                    continue
             if not self.timer_started:
                 self._begin_timer()
-            if hand.screen_y > self._onb_y:
-                self._onb_y = min(float(hand.screen_y), float(_ONB_BOARD_Y))
+            # Grab the onion: hand must be near it
+            if not self._onb_grabbed:
+                dx = hand.screen_x - 640
+                dy = hand.screen_y - int(self._onb_y)
+                if dx*dx + dy*dy < (_ONB_R + 55)**2:
+                    self._onb_grabbed = True
+                    self._flash_event('GRAB!', (0, 220, 255), 8)
+                continue
+            # Onion follows hand downward once grabbed
+            self._onb_y = min(float(hand.screen_y), float(_ONB_BOARD_Y))
             if self._onb_y >= _ONB_BOARD_Y:
-                self._phase = 'peel_skin'
+                self._phase       = 'peel_skin'
+                self._onb_grabbed = False
                 self._flash_event('PLACED!', (0, 255, 180), 14)
                 return ['grab']
         return []
@@ -1005,6 +1042,7 @@ class CookingScene(BaseMiniGame):
             self._flash_event('SLICE!', (0, 255, 200), 12)
             if self._slice_done >= _SLICE_NEEDED:
                 self._phase = 'bowl_drop'
+                self._init_bowl_pieces()
             return ['cut']
         elif self._slice_dir == 'up' and delta >= _SLICE_PX:
             self._slice_dir   = 'down'
@@ -1014,31 +1052,121 @@ class CookingScene(BaseMiniGame):
             self._flash_event('SLICE!', (0, 255, 200), 12)
             if self._slice_done >= _SLICE_NEEDED:
                 self._phase = 'bowl_drop'
+                self._init_bowl_pieces()
             return ['cut']
         return []
 
+    def _init_bowl_pieces(self):
+        """Scatter onion piece objects on the cutting board (right side)."""
+        rng = np.random.default_rng(seed=13)
+        self._bd_piece_pos  = []
+        self._bd_piece_vel  = []
+        self._bd_piece_ang  = []
+        self._bd_piece_avel = []
+        self._bd_in_bowl    = []
+        for i in range(_BOWL_PIECE_COUNT):
+            px = _PIECES_CX + int(rng.integers(-90, 90))
+            py = _PIECES_CY + int(rng.integers(-65, 65))
+            self._bd_piece_pos.append([float(px), float(py)])
+            self._bd_piece_vel.append([0.0, 0.0])
+            self._bd_piece_ang.append(float(rng.uniform(0, 6.28)))
+            self._bd_piece_avel.append(0.0)
+            self._bd_in_bowl.append(False)
+        self._bd_prev_knife  = None
+        self._bowl_knife_pos  = [_PIECES_CX - 60, _PIECES_CY - 20]
+        self._bowl_knife_hand = -1
+
     def _do_bowl_drop(self, hands):
-        for hand in hands:
-            if not hand.detected or not hand.gripped:
-                self._carrying = False
-                continue
-            hx, hy = hand.screen_x, hand.screen_y
-            if not self._carrying:
-                dx = hx - _PIECES_CX
-                dy = hy - _PIECES_CY
-                if dx * dx + dy * dy < 160 ** 2:
-                    self._carrying = True
-            else:
-                self._carry_xy = (hx, hy)
-                if hx > _BOWL2_CX - 120:
-                    self._carrying  = False
-                    self._bowl_count += 1
-                    self._flash_event('IN!', (255, 200, 50), 18)
-                    if self._bowl_count >= _BOWL_TRIPS:
-                        self._phase = 'onion_fry'
-                        self._init_onion()
+        # ── Step A: grab the knife ────────────────────────────────────────────
+        if self._bowl_knife_hand == -1:
+            for i, hand in enumerate(hands):
+                if not hand.detected or not hand.gripped:
+                    continue
+                dx = hand.screen_x - self._bowl_knife_pos[0]
+                dy = hand.screen_y - self._bowl_knife_pos[1]
+                if dx * dx + dy * dy < GRAB_RADIUS ** 2:
+                    self._bowl_knife_hand = i
+                    self._bd_prev_knife   = None
+                    self._flash_event('GRAB!', (0, 220, 255), 8)
                     return ['grab']
+            # Update piece physics even without knife (friction slows them)
+            self._update_bd_physics(0.0, 0.0)
+            return []
+
+        # ── Step B: verify hand still gripping ───────────────────────────────
+        if self._bowl_knife_hand >= len(hands):
+            self._bowl_knife_hand = -1
+            return []
+        hand = hands[self._bowl_knife_hand]
+        if not hand.detected or not hand.gripped:
+            self._try_reattach(hands, self._bowl_knife_pos, 'bowl_knife')
+            if self._held_tool == 'bowl_knife':
+                self._bowl_knife_hand = self._held_by
+                self._held_tool = None
+            else:
+                self._bowl_knife_hand = -1
+                self._bd_prev_knife   = None
+            return []
+
+        # ── Step C: knife follows hand ────────────────────────────────────────
+        kx = float(hand.screen_x)
+        ky = float(hand.screen_y)
+        self._bowl_knife_pos = [kx, ky]
+
+        # Knife velocity this frame
+        if self._bd_prev_knife is not None:
+            dkx = (kx - self._bd_prev_knife[0])
+            dky = (ky - self._bd_prev_knife[1])
+        else:
+            dkx = dky = 0.0
+        self._bd_prev_knife = (kx, ky)
+
+        # ── Step D: push nearby pieces with knife ────────────────────────────
+        self._update_bd_physics(kx, ky, dkx, dky)
+
+        # ── Step E: check completion ─────────────────────────────────────────
+        n_in = sum(self._bd_in_bowl)
+        if n_in >= _BOWL_PIECE_GOAL:
+            self._flash_event('DONE!', (255, 200, 50), 22)
+            self._phase = 'onion_fry'
+            self._init_onion()
+            return ['grab']
         return []
+
+    def _update_bd_physics(self, kx=0.0, ky=0.0, dkx=0.0, dky=0.0):
+        """Apply knife push force to nearby pieces, then integrate physics."""
+        for i in range(len(self._bd_piece_pos)):
+            if self._bd_in_bowl[i]:
+                continue
+            px, py = self._bd_piece_pos[i]
+
+            # Knife push: if knife close enough and moving
+            if (abs(dkx) + abs(dky)) > 0.5:
+                dx   = px - kx
+                dy   = py - ky
+                dist = math.sqrt(dx*dx + dy*dy)
+                if dist < _KNIFE_PUSH_R:
+                    falloff = 1.0 - dist / _KNIFE_PUSH_R
+                    self._bd_piece_vel[i][0]  += dkx * falloff * 0.7
+                    self._bd_piece_vel[i][1]  += dky * falloff * 0.7
+                    self._bd_piece_avel[i]    += (dkx - dky) * falloff * 0.04
+
+            # Friction
+            self._bd_piece_vel[i][0]  *= 0.88
+            self._bd_piece_vel[i][1]  *= 0.88
+            self._bd_piece_avel[i]    *= 0.85
+
+            # Integrate
+            self._bd_piece_pos[i][0]  += self._bd_piece_vel[i][0]
+            self._bd_piece_pos[i][1]  += self._bd_piece_vel[i][1]
+            self._bd_piece_ang[i]     += self._bd_piece_avel[i]
+
+            # Board boundary (keep on board, y range)
+            self._bd_piece_pos[i][1] = max(355.0, min(self._bd_piece_pos[i][1], 510.0))
+
+            # Bowl collection: crosses the left boundary
+            if self._bd_piece_pos[i][0] < _BOWL_COLLECT_X:
+                self._bd_in_bowl[i] = True
 
     # ── Drawing: Onion cut scene ──────────────────────────────────────────────
 
@@ -1092,55 +1220,113 @@ class CookingScene(BaseMiniGame):
                      (40, 92, 32), 1)
         cv2.line(frame, (0, board_top), (fw, board_top), (30, 76, 24), 4)
 
-        # Onion
-        onion_cx = fw // 2
-        onion_cy = int(self._onb_y) if p == 'place_onion' else _ONB_BOARD_Y
-        peel_frac = min(self._peel_done / _PEEL_NEEDED, 1.0)
-        slices    = self._slice_done if p in ('slice_onion', 'bowl_drop') else 0
-        self._draw_big_onion(frame, onion_cx, onion_cy, peel_frac, slices)
+        # Onion body — hidden in bowl_drop (only pieces visible then)
+        if p != 'bowl_drop':
+            onion_cx  = fw // 2
+            onion_cy  = int(self._onb_y) if p == 'place_onion' else _ONB_BOARD_Y
+            peel_frac = min(self._peel_done / _PEEL_NEEDED, 1.0)
+            slices    = self._slice_done if p == 'slice_onion' else 0
+            self._draw_big_onion(frame, onion_cx, onion_cy, peel_frac, slices)
 
-        # Knife (visible during slice phase)
+        # Knife (slice phase)
         if p == 'slice_onion':
             kx = int(self._slice_knife_pos[0])
             ky = int(self._slice_knife_pos[1])
             overlay(frame, self._knife_spr, kx, ky, size=195)
-            # Show grab ring only when knife not yet held
             if self._slice_knife_hand == -1:
                 _grab_ring(frame, self._slice_knife_pos)
 
-        # Sliced pieces + bowl (bowl_drop phase)
+        # Bowl + pieces + knife (bowl_drop phase)
         if p == 'bowl_drop':
-            # Bowl on right
-            self._draw_bowl_right(frame)
-            # Pieces cluster on left (or following hand if carrying)
-            if self._carrying:
-                px, py = int(self._carry_xy[0]), int(self._carry_xy[1])
-            else:
-                px, py = _PIECES_CX, _PIECES_CY
-            self._draw_onion_pieces(frame, px, py)
+            # Draw a prominent cutting board on the right side
+            bx, by = 460, 340
+            bw, bh = 780, 280
+            cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (52, 112, 42), -1)
+            cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (32, 80, 24), 4)
+            for gx in range(bx, bx + bw, 100):
+                cv2.line(frame, (gx, by), (gx, by + bh), (42, 95, 34), 1)
+            # Board label hole
+            cv2.ellipse(frame, (bx + bw - 55, by + bh // 2),
+                        (12, 36), 0, 0, 360, (32, 80, 24), -1)
 
-        # Arrow guide for place_onion
+            # Bowl on the LEFT side
+            self._draw_bowl_right(frame)
+
+            # Individual piece objects at their physics positions
+            for i in range(len(self._bd_piece_pos)):
+                if self._bd_in_bowl[i]:
+                    continue
+                px = int(self._bd_piece_pos[i][0])
+                py = int(self._bd_piece_pos[i][1])
+                ang = float(self._bd_piece_ang[i])
+                w2, h2 = 18, 13
+                ca, sa = math.cos(ang), math.sin(ang)
+                pts = np.array([
+                    [px + int(-w2*ca + h2*sa), py + int(-w2*sa - h2*ca)],
+                    [px + int( w2*ca + h2*sa), py + int( w2*sa - h2*ca)],
+                    [px + int( w2*ca - h2*sa), py + int( w2*sa + h2*ca)],
+                    [px + int(-w2*ca - h2*sa), py + int(-w2*sa + h2*ca)],
+                ], dtype=np.int32)
+                cv2.fillPoly(frame, [pts + 2], (22, 20, 18))
+                cv2.fillPoly(frame, [pts], (215, 235, 245))
+                cv2.polylines(frame, [pts], True, (155, 175, 185), 1)
+
+            # Progress label
+            n_in = sum(self._bd_in_bowl)
+            _shadow_text(frame, f'{n_in}/{_BOWL_PIECE_GOAL}',
+                         _BOWL2_CX, _BOWL2_CY - 130, 1.0, (255, 230, 100), 2, center=True)
+
+            # Sweep arrow hint (when knife is grabbed)
+            if self._bowl_knife_hand != -1:
+                cv2.arrowedLine(frame, (780, 390), (420, 390),
+                                (255, 200, 50), 3, tipLength=0.06)
+
+            # Knife
+            kx = int(self._bowl_knife_pos[0])
+            ky = int(self._bowl_knife_pos[1])
+            overlay(frame, self._knife_spr, kx, ky, size=195)
+            if self._bowl_knife_hand == -1:
+                _grab_ring(frame, self._bowl_knife_pos)
+
+        # place_onion: grab ring + down arrow
         if p == 'place_onion':
-            ay = int(self._onb_y) - 85
-            cv2.arrowedLine(frame, (onion_cx, ay), (onion_cx, ay + 70),
-                            (0, 220, 255), 4, tipLength=0.28)
+            if not self._onb_grabbed:
+                _grab_ring(frame, [onion_cx, int(self._onb_y)])
+            else:
+                ay = int(self._onb_y) - 85
+                cv2.arrowedLine(frame, (onion_cx, ay), (onion_cx, ay + 70),
+                                (0, 220, 255), 4, tipLength=0.28)
 
     def _draw_bowl_right(self, frame):
+        """Large side-view blue bowl (Cooking Mama style)."""
         cx, cy = _BOWL2_CX, _BOWL2_CY
-        cv2.ellipse(frame, (cx, cy + 35), (95, 28), 0, 0, 360, (38, 34, 30), -1)
-        body = np.array([[cx - 90, cy + 10], [cx + 90, cy + 10],
-                         [cx + 65, cy - 60], [cx - 65, cy - 60]], dtype=np.int32)
-        cv2.fillPoly(frame, [body], (155, 158, 165))
-        cv2.polylines(frame, [body], True, (100, 102, 108), 3)
-        cv2.ellipse(frame, (cx, cy - 60), (65, 20), 0, 0, 360, (178, 182, 188), -1)
-        cv2.ellipse(frame, (cx, cy - 60), (65, 20), 0, 0, 360, (115, 118, 124), 2)
+        r = 110   # bowl radius
 
-    def _draw_onion_pieces(self, frame, cx, cy):
-        rng = [(cx - 50, cy - 30), (cx + 40, cy - 20), (cx, cy + 15),
-               (cx - 30, cy + 35), (cx + 55, cy + 25), (cx + 10, cy - 45),
-               (cx - 55, cy + 10), (cx + 38, cy + 45)]
-        for i, (px, py) in enumerate(rng):
-            ang = i * 0.7
+        # Drop shadow
+        cv2.ellipse(frame, (cx + 12, cy + 16), (r, int(r * 0.38)),
+                    0, 0, 360, (28, 26, 22), -1)
+        # Outer bowl shape (slightly squashed ellipse, deep blue)
+        cv2.ellipse(frame, (cx, cy), (r, int(r * 0.72)), 0, 0, 360, (158, 120, 60), -1)
+        # Bowl interior (lighter sky blue)
+        cv2.ellipse(frame, (cx, cy - int(r * 0.12)), (int(r * 0.84), int(r * 0.55)),
+                    0, 0, 360, (210, 185, 110), -1)
+        # Inner depth circle
+        cv2.ellipse(frame, (cx, cy - int(r * 0.18)), (int(r * 0.52), int(r * 0.33)),
+                    0, 0, 360, (190, 162, 90), -1)
+        # Rim highlight
+        cv2.ellipse(frame, (cx, cy), (r, int(r * 0.72)),
+                    0, 210, 330, (220, 200, 155), 5)
+        # Dark outline
+        cv2.ellipse(frame, (cx, cy), (r, int(r * 0.72)),
+                    0, 0, 360, (100, 72, 28), 3)
+
+    def _draw_onion_pieces(self, frame, cx, cy, scale=1.0):
+        offsets = [(-50, -30), (40, -20), (0, 15), (-30, 35),
+                   (55, 25), (10, -45), (-55, 10), (38, 45)]
+        n = max(1, int(len(offsets) * scale))
+        for i, (ox, oy) in enumerate(offsets[:n]):
+            px, py = cx + ox, cy + oy
+            ang    = i * 0.7
             w2, h2 = 18, 13
             ca, sa = math.cos(ang), math.sin(ang)
             pts = np.array([
@@ -1194,6 +1380,7 @@ def _panel(frame, x, y, w, h, color=(15, 15, 15), alpha=0.6):
 
 def _demo_fist(frame, cx, cy, size=58, openness=0.0):
     """White cartoon-style hand — openness 0.0=fist, 1.0=fingers fully extended."""
+    cx, cy = int(cx), int(cy)
     fh, fw = frame.shape[:2]
     pad = size + 36
     x1, y1 = max(0, cx - pad), max(0, cy - pad)
