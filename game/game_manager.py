@@ -237,7 +237,7 @@ class GameManager:
         # ── DEBUG: number keys 1-9 jump to specific phase (MENU or PLAYING) ──
         if key in range(ord('1'), ord('9') + 1):
             idx = key - ord('1')
-            if self.state == 'MENU':
+            if self.state in ('MENU', 'STAGE_SELECT'):
                 self._begin_countdown()
                 self._debug_jump_idx = idx
             elif self.state == 'PLAYING' and self.game and hasattr(self.game, 'jump_to_phase'):

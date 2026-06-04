@@ -31,8 +31,8 @@ _PC_PAN_CX      = 640
 _PC_PAN_CY      = 390
 _PC_PAN_R       = 235
 _PC_PAN_AREA_R  = 188
-_PC_PAN_HX      = 640          # handle bottom center
-_PC_PAN_HY      = 390 + 235 + 60
+_PC_PAN_HX      = 640 - 235 - 80   # handle left side x  (= 325)
+_PC_PAN_HY      = 390               # handle y (same as pan center)
 _PC_GAUGE_SPEED = 0.0032       # fill per frame
 _PC_GREEN_MIN   = 0.58         # green zone start
 _PC_GREEN_MAX   = 0.88         # green zone end (burn if exceeded)
@@ -74,9 +74,11 @@ def _rot(px, py, cx, cy, a):
 
 class PancakeScene(BaseMiniGame):
     name        = 'Pancakes'
-    instruction = 'Rotate CCW to pour out the egg white!'
+    instruction = 'Make pancakes!'
     duration    = 180.0
     grab_phase  = True
+
+    _DEBUG_PHASES = ['egg_separate', 'mixer', 'cook_pancake']
 
     def __init__(self):
         super().__init__()
@@ -84,6 +86,14 @@ class PancakeScene(BaseMiniGame):
         self._init_egg()
         self._init_mixer()
         self._init_cook_pancake()
+
+    def jump_to_phase(self, phase):
+        self._phase = phase
+        self._begin_timer()
+        if phase == 'cook_pancake':
+            self._init_cook_pancake()
+        elif phase == 'mixer':
+            self._init_mixer()
 
     def _init_egg(self):
         self._e_current   = 0
@@ -520,132 +530,145 @@ class PancakeScene(BaseMiniGame):
         cx, cy = _PC_PAN_CX, _PC_PAN_CY
         sp = self._pc_subphase
 
-        # ── Stove + flames ────────────────────────────────────────────────────
-        cv2.ellipse(frame, (cx, cy + _PC_PAN_R + 18), (_PC_PAN_R+42, 35),
-                    0, 0, 360, (45, 41, 37), -1)
-        fl_span = int(_PC_PAN_R * 1.5)
-        for fi in range(8):
-            fx  = cx - fl_span//2 + fi * (fl_span//7)
-            flk = int(12 * math.sin(t * 9.5 + fi * 1.3))
-            fy0 = cy + _PC_PAN_R + 5
-            cv2.ellipse(frame, (fx, fy0), (6, 14+flk//2), 0, 0, 360, (180,88,14), -1)
-            pts_f = np.array([[fx-10,fy0],[fx,fy0-40-flk],[fx+10,fy0]], np.int32)
-            cv2.fillPoly(frame, [pts_f], (0, int(138+flk*3), 242))
+        # ── Stove ring ────────────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx+5, cy+8), (_PC_PAN_R+38, _PC_PAN_R+38),
+                    0, 0, 360, (18,15,12), -1)
+        cv2.ellipse(frame, (cx, cy), (_PC_PAN_R+38, _PC_PAN_R+38),
+                    0, 0, 360, (55, 180, 230), -1)   # blue/orange stove
+        cv2.ellipse(frame, (cx, cy), (_PC_PAN_R+24, _PC_PAN_R+24),
+                    0, 0, 360, (40, 40, 200), -1)    # inner ring (red-orange)
+        # Flame glow
+        cv2.ellipse(frame, (cx, cy), (_PC_PAN_R+12, _PC_PAN_R+12),
+                    0, 0, 360, (18, 108, 220), -1)
 
-        # ── Pan ───────────────────────────────────────────────────────────────
-        cv2.circle(frame, (cx, cy), _PC_PAN_R, (34, 30, 26), -1)
-        cv2.circle(frame, (cx, cy), _PC_PAN_R, (16, 13, 10), 10)
-        sv = int(145 - self._pc_gauge[self._pc_side] * 25)
-        cv2.circle(frame, (cx, cy), _PC_PAN_AREA_R+8, (sv, sv+2, sv+4), -1)
+        # ── Pan body ──────────────────────────────────────────────────────────
+        cv2.circle(frame, (cx+4, cy+4), _PC_PAN_R, (15,12,10), -1)
+        cv2.circle(frame, (cx, cy), _PC_PAN_R, (42, 38, 34), -1)
+        cv2.circle(frame, (cx, cy), _PC_PAN_R, (22, 18, 14), 8)
+        # Cooking surface
+        cook_heat = self._pc_gauge[self._pc_side]
+        sv = int(138 - cook_heat * 22)
+        cv2.circle(frame, (cx, cy), _PC_PAN_AREA_R, (sv, sv+2, sv+4), -1)
+        cv2.circle(frame, (cx, cy), _PC_PAN_AREA_R, (55, 50, 45), 2)
 
-        # Pan handle (bottom)
-        hy1 = cy + _PC_PAN_R - 10
-        hy2 = cy + _PC_PAN_R + 115
-        cv2.rectangle(frame, (cx-22, hy1), (cx+22, hy2), (30, 26, 22), -1)
-        cv2.rectangle(frame, (cx-22, hy1), (cx+22, hy2), (14, 11, 9), 3)
+        # ── Pan handle (LEFT side) ────────────────────────────────────────────
+        hx1 = cx - _PC_PAN_R + 12
+        hx2 = cx - _PC_PAN_R - 150
+        cv2.rectangle(frame, (hx2, cy-22), (hx1, cy+22), (28, 24, 20), -1)
+        cv2.rectangle(frame, (hx2, cy-22), (hx1, cy+22), (12, 10, 8),  3)
+        # Grip texture
+        for gx in range(hx2+20, hx1-10, 22):
+            cv2.line(frame, (gx, cy-18), (gx, cy+18), (40, 36, 32), 3)
 
         # ── Pancake ───────────────────────────────────────────────────────────
-        flip_frac = self._pc_flip_anim / 40.0
-        p_cy      = cy
-        p_scale_x = 1.0
-        if self._pc_flip_anim > 0:
-            p_cy     = int(cy - 80 * math.sin(math.pi * (1 - flip_frac)))
-            p_scale_x = abs(math.cos(math.pi * (1 - flip_frac)))
+        flip_frac  = self._pc_flip_anim / 40.0
+        air_height = int(120 * math.sin(math.pi * (1-flip_frac))) if self._pc_flip_anim > 0 else 0
+        cos_scale  = abs(math.cos(math.pi * (1-flip_frac))) if self._pc_flip_anim > 0 else 1.0
+        p_cy       = cy - air_height
 
-        pr = int(_PC_PAN_AREA_R * 0.78)
-        pry = int(pr * 0.32)   # flat perspective
+        pr   = int(_PC_PAN_AREA_R * 0.80)
+        pry  = int(pr * 0.30)    # perspective oval
+        prxA = max(4, int(pr * cos_scale))
 
-        # Cook color: raw cream → golden brown based on gauge
+        # Cook color
         g0, g1 = self._pc_gauge[0], self._pc_gauge[1]
-        if self._pc_side == 0 or self._pc_flip_anim > 0:
-            cook_frac = g0 / _PC_GREEN_MAX
-        else:
-            cook_frac = g1 / _PC_GREEN_MAX
-        top_r = int(188 + cook_frac * 30)
-        top_g = int(160 + cook_frac * 10)
-        top_b = int(42  - cook_frac * 10)
-        top_col = (top_b, top_g, top_r)  # BGR
+        cf = (g0 if self._pc_side==0 else g1) / _PC_GREEN_MAX
+        # Raw cream → golden brown
+        top_b = int(48  + cf * 20)
+        top_g = int(168 - cf * 8)
+        top_r = int(215 - cf * 5)
+        top_col = (top_b, top_g, top_r)   # BGR
+        side_col = (max(0,top_b-25), max(0,top_g-35), max(0,top_r-30))
 
-        prx_anim = max(5, int(pr * p_scale_x))
-        cv2.ellipse(frame, (cx+3, p_cy+4), (prx_anim+3, pry+3), 0, 0, 360, (18,15,12), -1)
-        cv2.ellipse(frame, (cx, p_cy), (prx_anim, pry), 0, 0, 360, top_col, -1)
-        # Bubbles/texture on top
-        if p_scale_x > 0.3:
-            rng2 = np.random.default_rng(seed=7)
-            for _ in range(8):
-                bx = cx + int(rng2.integers(-pr//2, pr//2))
-                by = p_cy + int(rng2.integers(-pry//2, pry//2))
-                cv2.circle(frame, (bx, by), int(rng2.integers(3,8)),
-                           tuple(max(0,c-25) for c in top_col), -1)
-        cv2.ellipse(frame, (cx, p_cy), (prx_anim, pry), 0, 0, 360,
-                    tuple(max(0,c-35) for c in top_col), 3)
+        # Side edge of thick pancake (before top face)
+        side_h = int(pry * 0.9)
+        cv2.ellipse(frame, (cx, p_cy + side_h), (prxA, int(pry*0.5)),
+                    0, 0, 360, side_col, -1)
 
-        # ── Grab ring on handle (when side0 in green zone) ────────────────────
+        # Top face
+        cv2.ellipse(frame, (cx+3, p_cy+4), (prxA+3, pry+3), 0, 0, 360, (15,12,10), -1)
+        cv2.ellipse(frame, (cx, p_cy), (prxA, pry), 0, 0, 360, top_col, -1)
+        # Bubble holes (texture)
+        if cos_scale > 0.25:
+            rng2 = np.random.default_rng(seed=42)
+            for _ in range(10):
+                bx2 = cx + int(rng2.integers(-int(pr*0.55), int(pr*0.55)))
+                by2 = p_cy + int(rng2.integers(-int(pry*0.55), int(pry*0.55)))
+                brad = int(rng2.integers(4, 9))
+                cv2.circle(frame, (bx2, by2), brad, side_col, -1)
+        cv2.ellipse(frame, (cx, p_cy), (prxA, pry), 0, 0, 360,
+                    tuple(max(0,c-40) for c in top_col), 3)
+
+        # ── Grab ring on handle (flip prompt) ────────────────────────────────
         if (sp == 'cook' and self._pc_side == 0
                 and self._pc_gauge[0] >= _PC_GREEN_MIN
                 and not self._pc_pan_grabbed
                 and self._pc_flip_anim == 0):
-            rr = int(55 + 8*abs(math.sin(t*5)))
+            rr = int(52 + 8*abs(math.sin(t*5)))
             cv2.circle(frame, (_PC_PAN_HX, _PC_PAN_HY), rr, (0,200,255), 2, cv2.LINE_AA)
-            _shadow_text(frame, 'GRAB & FLIP UP!', _PC_PAN_HX,
-                         _PC_PAN_HY + rr + 18, 0.60, (0,200,255), 1, center=True)
+            _shadow_text(frame, 'GRAB & Flick UP!', _PC_PAN_HX,
+                         _PC_PAN_HY - rr - 14, 0.62, (0,200,255), 1, center=True)
+            # Up arrow
+            cv2.arrowedLine(frame, (_PC_PAN_HX, _PC_PAN_HY + 40),
+                            (_PC_PAN_HX, _PC_PAN_HY - 50),
+                            (0,200,255), 3, tipLength=0.35)
 
         # ── Plate (serve phase) ───────────────────────────────────────────────
         if sp == 'serve':
             px = int(self._pc_plate_pos[0])
             py = int(self._pc_plate_pos[1])
-            cv2.ellipse(frame, (px+4, py+8), (88, 28), 0, 0, 360, (18,15,12), -1)
-            cv2.ellipse(frame, (px, py), (96, 32), 0, 0, 360, (48, 38, 148), -1)
-            cv2.ellipse(frame, (px, py), (88, 28), 0, 0, 360, (238, 242, 248), -1)
-            cv2.ellipse(frame, (px, py), (88, 28), 0, 0, 360, (175, 180, 190), 3)
+            cv2.ellipse(frame, (px+5, py+10), (110, 35), 0, 0, 360, (15,12,10), -1)
+            cv2.ellipse(frame, (px, py+2), (118, 38), 0, 0, 360, (38, 38, 155), -1)
+            cv2.ellipse(frame, (px, py), (110, 34), 0, 0, 360, (242, 246, 252), -1)
+            cv2.ellipse(frame, (px, py), (98, 28), 0, 0, 360, (228, 232, 240), -1)
+            cv2.ellipse(frame, (px, py), (110, 34), 0, 0, 360, (175, 180, 192), 3)
             if not self._pc_plate_grabbed:
                 rr = int(55 + 8*abs(math.sin(t*5)))
                 cv2.circle(frame, (px, py), rr, (80,220,140), 2, cv2.LINE_AA)
-                _shadow_text(frame, 'GRAB PLATE!', px, py - rr - 12,
+                _shadow_text(frame, 'GRAB PLATE!', px, py - rr - 14,
                              0.62, (80,220,140), 1, center=True)
-            cv2.arrowedLine(frame, (px - 80, py), (px - 200, py),
-                            (80,220,140), 3, tipLength=0.3)
+            cv2.arrowedLine(frame, (px-60, py), (px-180, py),
+                            (80,220,140), 3, tipLength=0.28)
 
-        # ── Gauges ────────────────────────────────────────────────────────────
-        self._draw_gauge_bar(frame, w//2 - 280, 55, self._pc_gauge[0], 'Side 1')
-        self._draw_gauge_bar(frame, w//2 - 280, 110, self._pc_gauge[1], 'Side 2')
+        # ── Gauges (top right, with face emoji) ───────────────────────────────
+        gx0 = w - 340
+        for idx, gy in enumerate([30, 85]):
+            done  = self._pc_gauge[idx] >= _PC_GREEN_MIN
+            face  = ':)' if done else ':('
+            fcol  = (50,220,80) if done else (50,80,220)
+            # face circle
+            cv2.circle(frame, (gx0 - 28, gy+20), 22, fcol, -1)
+            cv2.circle(frame, (gx0 - 28, gy+20), 22, (255,255,255), 2)
+            _shadow_text(frame, face, gx0-28, gy+27, 0.48, (255,255,255), 1, center=True)
+            self._draw_gauge_bar(frame, gx0, gy, self._pc_gauge[idx], f'Side {idx+1}')
 
         # ── Instruction ───────────────────────────────────────────────────────
-        msgs = {'cook': ('Cook until green!  Then FLIP' if self._pc_side == 0
-                         else 'Cook side 2 until green!'),
-                'flip_anim': 'Flipping!',
-                'serve': 'Grab the plate and bring it to the pan!'}
+        msgs = {
+            'cook':      'Cook until GREEN zone!  Then FLIP' if self._pc_side==0 else 'Cook side 2 to GREEN!',
+            'flip_anim': 'Flipping!',
+            'serve':     'Grab the plate → bring to pan!',
+        }
         _shadow_text(frame, msgs.get(sp,''), w//2, h-32,
                      0.62, (200,210,230), 1, center=True)
         return frame
 
     def _draw_gauge_bar(self, frame, bx, by, value, label):
-        """Horizontal gauge bar with red/yellow/green zones."""
-        bw, bh = 560, 38
-        # Background
-        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (30, 28, 24), -1)
-        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (70, 68, 62), 2)
-
-        # Zone colors (BGR)
+        bw, bh = 300, 38
+        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (25,22,18), -1)
+        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (60,58,52), 2)
         zones = [
-            (0.0,   _PC_GREEN_MIN, (40,  55,  200)),  # red = underdone
-            (_PC_GREEN_MIN, _PC_GREEN_MAX, (50, 210, 80)),  # green = perfect
-            (_PC_GREEN_MAX, 1.0, (30,  30,  160)),    # dark = burnt
+            (0.0,        _PC_GREEN_MIN,  (40, 55, 210)),   # red
+            (_PC_GREEN_MIN, _PC_GREEN_MAX, (50, 210, 80)),  # green
         ]
-        for z_start, z_end, col in zones:
-            x1 = bx + int(z_start * bw) + 2
-            x2 = bx + int(z_end   * bw) - 1
+        for zs, ze, col in zones:
+            x1 = bx + int(zs * bw) + 2
+            x2 = bx + int(ze * bw) - 1
             if x2 > x1:
                 cv2.rectangle(frame, (x1, by+3), (x2, by+bh-3), col, -1)
-
-        # Fill indicator (moving bar)
+        # Moving indicator pin
         fill_x = bx + int(value * bw)
-        cv2.rectangle(frame, (fill_x-4, by-4), (fill_x+4, by+bh+4), (255,255,255), -1)
-        cv2.rectangle(frame, (fill_x-4, by-4), (fill_x+4, by+bh+4), (80,80,100), 2)
-
-        # Label
-        _shadow_text(frame, label, bx - 10, by + bh - 6, 0.50,
-                     (200,208,220), 1, center=False)
+        cv2.rectangle(frame, (fill_x-5, by-5), (fill_x+5, by+bh+5), (255,255,255), -1)
+        cv2.rectangle(frame, (fill_x-5, by-5), (fill_x+5, by+bh+5), (70,75,90), 2)
 
     # ── Mixer phase ───────────────────────────────────────────────────────────
 
