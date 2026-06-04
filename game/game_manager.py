@@ -6,8 +6,9 @@ import time
 from .hand_tracker import HandTracker
 from .hand_avatar   import draw_all as draw_avatars
 from .score_manager import ScoreManager
-from .cooking_scene import CookingScene
-from .background    import get_kitchen_bg
+from .cooking_scene  import CookingScene
+from .pancake_scene  import PancakeScene
+from .background     import get_kitchen_bg
 from .ui import (draw_panel, draw_progress_bar, draw_text, draw_text_centered,
                  dim, COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER,
                  COLOR_WHITE, COLOR_GREY, FONT)
@@ -199,7 +200,8 @@ class GameManager:
         self._menu_btn_hold    = [0, 0, 0]
         self._MENU_HOLD_FRAMES = 22
         # Stage select grab state
-        self._stage_btn_hold   = [0, 0]   # [pancake, steak]
+        self._stage_btn_hold   = [0, 0]
+        self._selected_scene   = CookingScene   # default
 
     # ──────────────────────────────────────────────────────────── public ──────
 
@@ -297,7 +299,7 @@ class GameManager:
         self.state = 'COUNTDOWN'
 
     def _launch_game(self):
-        cls       = SEQUENCE[self.game_idx]
+        cls       = getattr(self, '_selected_scene', CookingScene)
         self.game = cls()
         self.game.start()
         self._game_start_score = self.score.total_score
@@ -436,8 +438,8 @@ class GameManager:
 
         # Card definitions: (label, subtitle, locked)
         stages = [
-            ('Pancake',        'Coming  Soon!', True),
-            ('Salisbury Steak', 'Play Now!',    False),
+            ('Pancakes',       'Play Now!',  False),
+            ('Salisbury Steak', 'Play Now!', False),
         ]
         card_w, card_h = 480, 420
         gap            = 60
@@ -508,7 +510,11 @@ class GameManager:
                                   (bx + 20 + bar_w, card_y + card_h - 16),
                                   COLOR_PRIMARY, -1)
 
-        if activated == 1:   # Steak selected
+        if activated == 0:   # Pancake selected
+            self._selected_scene = PancakeScene
+            self._begin_countdown()
+        elif activated == 1:   # Steak selected
+            self._selected_scene = CookingScene
             self._begin_countdown()
 
         draw_text_centered(frame, 'Grip  over  a  card  to  select  |  ESC: back',
