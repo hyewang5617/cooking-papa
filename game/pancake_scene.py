@@ -4,7 +4,29 @@ import time
 import numpy as np
 from .minigames.base import BaseMiniGame
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# ── Mixer constants ───────────────────────────────────────────────────────────
+_MX_CX       = 640
+_MX_CY       = 360
+_MX_BOWL_RX  = 195
+_MX_BOWL_RY  = 155
+_MX_LIGHT_INTERVAL = 1.5    # seconds between light changes
+_MX_GRAB_R   = 70
+_MX_INGREDIENTS = [
+    'Flour', 'Milk', 'Sugar',
+    'Baking Powder', 'Butter', 'Meringue',
+]
+_MX_ING_COLORS = [          # BGR colors for each ingredient icon
+    (240, 245, 250),         # flour - white
+    (235, 240, 248),         # milk - cream white
+    (200, 228, 248),         # sugar - light white
+    (205, 220, 242),         # baking powder - off-white
+    (65,  210, 248),         # butter - pale yellow
+    (250, 252, 255),         # meringue - pure white
+]
+_MX_ING_X    = 1080          # ingredient spawn x
+_MX_ING_Y    = 300           # ingredient spawn y
+
+# ── Egg constants ─────────────────────────────────────────────────────────────
 _E_EGGS      = 2
 _E_CX        = 640          # shell center x (fixed)
 _E_CY        = 300          # shell center y (fixed)
@@ -45,6 +67,7 @@ class PancakeScene(BaseMiniGame):
         super().__init__()
         self._phase = 'egg_separate'
         self._init_egg()
+        self._init_mixer()
 
     def _init_egg(self):
         self._e_current   = 0
@@ -79,6 +102,8 @@ class PancakeScene(BaseMiniGame):
             self._begin_timer()
         if self._phase == 'egg_separate':
             self._update_egg(hands)
+        elif self._phase == 'mixer':
+            self._update_mixer(hands)
         return []
 
     def _update_egg(self, hands):
@@ -102,7 +127,8 @@ class PancakeScene(BaseMiniGame):
                 self._e_prev_ang  = None
                 self._e_total_ccw = 0.0
                 if all(self._e_done):
-                    self._phase = 'complete'
+                    self._phase = 'mixer'
+                    self._init_mixer()
             return
 
         for hand in hands:
@@ -173,6 +199,8 @@ class PancakeScene(BaseMiniGame):
     def draw(self, frame, hands):
         t  = time.time()
         h, w = frame.shape[:2]
+        if self._phase == 'mixer':
+            return self._draw_mixer(frame)
 
         # ── Bowl ──────────────────────────────────────────────────────────────
         bcx, bcy = _E_BOWL_CX, _E_BOWL_CY
@@ -375,3 +403,189 @@ class PancakeScene(BaseMiniGame):
         cv2.fillPoly(frame, [arr], (225, 230, 238))
         cv2.polylines(frame, [arr], True, (170, 178, 188), 2)
         cv2.circle(frame, (cx, cy + 8), 4, (80, 220, 130), -1)
+
+    # ── Mixer phase ───────────────────────────────────────────────────────────
+
+    def _init_mixer(self):
+        import random as _rnd
+        self._mx_added      = 0           # how many ingredients added
+        self._mx_grabbed    = False
+        self._mx_ing_pos    = [float(_MX_ING_X), float(_MX_ING_Y)]
+        self._mx_light      = 'green'
+        self._mx_light_t    = time.time()
+        self._mx_spin       = 0.0         # mixer blade angle
+        self._mx_spin_speed = 0.0         # current spin speed
+        self._mx_fail_flash = 0           # frames of red flash (wrong color)
+
+    def _update_mixer(self, hands):
+        t = time.time()
+
+        # Traffic light cycling
+        if t - self._mx_light_t >= _MX_LIGHT_INTERVAL:
+            import random as _rnd
+            self._mx_light   = _rnd.choice(['green', 'orange', 'red',
+                                             'green', 'orange', 'red', 'green'])
+            self._mx_light_t = t
+
+        # Spin speed based on traffic light: red=fast, orange=medium, green=slow
+        target_speed = {'red': 0.28, 'orange': 0.14, 'green': 0.04}[self._mx_light]
+        self._mx_spin_speed += (target_speed - self._mx_spin_speed) * 0.08
+        self._mx_spin += self._mx_spin_speed
+
+        if self._mx_fail_flash > 0:
+            self._mx_fail_flash -= 1
+
+        for hand in hands:
+            if not hand.detected:
+                continue
+            hx, hy = float(hand.screen_x), float(hand.screen_y)
+
+            if not self._mx_grabbed:
+                if hand.gripped:
+                    dx = hx - self._mx_ing_pos[0]
+                    dy = hy - self._mx_ing_pos[1]
+                    if dx*dx + dy*dy < _MX_GRAB_R**2:
+                        self._mx_grabbed = True
+                continue
+
+            # Grabbed: ingredient follows hand
+            self._mx_ing_pos = [hx, hy]
+
+            if not hand.gripped:
+                # Released: check if over bowl and light is green
+                dx = hx - _MX_CX
+                dy = hy - _MX_CY
+                over_bowl = (dx*dx / (_MX_BOWL_RX**2) + dy*dy / (_MX_BOWL_RY**2)) <= 1.2
+                if over_bowl:
+                    if self._mx_light == 'green':
+                        self._mx_added += 1
+                        if self._mx_added >= len(_MX_INGREDIENTS):
+                            self._phase = 'complete'
+                    else:
+                        self._mx_fail_flash = 18
+                # Reset ingredient position
+                self._mx_ing_pos  = [float(_MX_ING_X), float(_MX_ING_Y)]
+                self._mx_grabbed  = False
+            break
+
+    def _draw_mixer(self, frame):
+        t  = time.time()
+        h, w = frame.shape[:2]
+        cx, cy = _MX_CX, _MX_CY
+        n  = self._mx_added           # number of ingredients added
+        frac = n / len(_MX_INGREDIENTS)   # 0→1
+
+        # ── Bowl shadow + body ────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx+8, cy+12), (_MX_BOWL_RX, _MX_BOWL_RY),
+                    0, 0, 360, (20,18,16), -1)
+        cv2.ellipse(frame, (cx, cy), (_MX_BOWL_RX, _MX_BOWL_RY),
+                    0, 0, 360, (205, 212, 225), -1)
+
+        # ── Bowl contents ─────────────────────────────────────────────────────
+        # Start: small dark yellow yolk, progress to full light creamy batter
+        content_ry = int(_MX_BOWL_RY * (0.28 + frac * 0.58))
+        content_rx = int(_MX_BOWL_RX * (0.45 + frac * 0.48))
+        # Color: egg yolk yellow → creamy white (BGR)
+        cr = int(30  + frac * 188)   # B: 30 → 218
+        cg = int(168 + frac * 58)    # G: 168 → 226
+        cb = int(240 + frac * 6)     # R: 240 → 246
+        content_col = (cr, cg, cb)
+        cv2.ellipse(frame, (cx, cy + int(_MX_BOWL_RY * 0.25)),
+                    (content_rx, content_ry), 0, 0, 360, content_col, -1)
+        # Lighter highlight on surface
+        hl_col = tuple(min(255, c+30) for c in content_col)
+        cv2.ellipse(frame, (cx - content_rx//4, cy + int(_MX_BOWL_RY * 0.15)),
+                    (content_rx//2, content_ry//3), 0, 0, 360, hl_col, -1)
+
+        # Spinning effect (swirl lines when spinning)
+        if self._mx_spin_speed > 0.05:
+            for i in range(4):
+                a  = self._mx_spin + i * math.pi/2
+                sx = int(cx + content_rx * 0.5 * math.cos(a))
+                sy = int(cy + content_ry * 0.4 * math.sin(a) + _MX_BOWL_RY * 0.25)
+                ex = int(cx + content_rx * 0.5 * math.cos(a + math.pi))
+                ey = int(cy + content_ry * 0.4 * math.sin(a + math.pi) + _MX_BOWL_RY * 0.25)
+                cv2.line(frame, (sx, sy), (ex, ey), hl_col, 3, cv2.LINE_AA)
+
+        # ── Bowl rim (on top of contents) ─────────────────────────────────────
+        cv2.ellipse(frame, (cx, cy), (_MX_BOWL_RX, _MX_BOWL_RY),
+                    0, 0, 360, (175, 182, 195), 5)
+        # Inner rim highlight (top)
+        cv2.ellipse(frame, (cx, cy), (_MX_BOWL_RX, _MX_BOWL_RY),
+                    0, 200, 340, (235, 240, 248), 3)
+
+        # ── Mixer head (top) ──────────────────────────────────────────────────
+        head_y = cy - _MX_BOWL_RY - 30
+        cv2.rectangle(frame, (cx-55, head_y-55), (cx+55, head_y+10),
+                      (80, 78, 72), -1)
+        cv2.rectangle(frame, (cx-55, head_y-55), (cx+55, head_y+10),
+                      (110, 108, 100), 3)
+        # Shaft down into bowl
+        cv2.rectangle(frame, (cx-8, head_y+10), (cx+8, cy - _MX_BOWL_RY//2),
+                      (90, 88, 82), -1)
+        # Beater blades (spinning)
+        blade_cy = cy - _MX_BOWL_RY//3
+        for i in range(3):
+            a  = self._mx_spin + i * (2*math.pi/3)
+            bx = int(cx + 38 * math.cos(a))
+            by = int(blade_cy + 20 * math.sin(a))
+            cv2.line(frame, (cx, blade_cy), (bx, by), (155, 158, 165), 5)
+            cv2.circle(frame, (bx, by), 6, (175, 178, 185), -1)
+
+        # ── Fail flash ────────────────────────────────────────────────────────
+        if self._mx_fail_flash > 0 and self._mx_fail_flash % 4 < 2:
+            cv2.rectangle(frame, (0, 0), (w, h), (0, 0, 200), 8)
+            _shadow_text(frame, 'GREEN only!', w//2, h//2,
+                         1.2, (80, 120, 255), 2, center=True)
+
+        # ── Traffic light ─────────────────────────────────────────────────────
+        lx, ly = 90, 160
+        lights = [('red', (30, 30, 220)), ('orange', (30, 160, 240)),
+                  ('green', (50, 210, 70))]
+        # Panel
+        cv2.rectangle(frame, (lx-35, ly-75), (lx+35, ly+75), (40, 38, 34), -1)
+        cv2.rectangle(frame, (lx-35, ly-75), (lx+35, ly+75), (70, 68, 62), 3)
+        for i, (name, col) in enumerate(lights):
+            ly_c = ly - 50 + i * 50
+            active = (self._mx_light == name)
+            draw_col = col if active else tuple(c//4 for c in col)
+            pulse = int(8*abs(math.sin(t*6))) if active else 0
+            cv2.circle(frame, (lx, ly_c), 18+pulse, draw_col, -1)
+            if active:
+                cv2.circle(frame, (lx, ly_c), 18+pulse, (255,255,255), 2)
+
+        # Green hint
+        light_hint = {'green': 'Add ingredient NOW!',
+                      'orange': 'Wait...', 'red': 'STOP!'}
+        hint_cols  = {'green': (50, 220, 80), 'orange': (30, 160, 240), 'red': (60, 60, 220)}
+        _shadow_text(frame, light_hint[self._mx_light],
+                     lx, ly + 95, 0.58, hint_cols[self._mx_light], 1, center=True)
+
+        # ── Current ingredient ────────────────────────────────────────────────
+        if self._mx_added < len(_MX_INGREDIENTS):
+            ing_name = _MX_INGREDIENTS[self._mx_added]
+            ing_col  = _MX_ING_COLORS[self._mx_added]
+            ix = int(self._mx_ing_pos[0])
+            iy = int(self._mx_ing_pos[1])
+
+            # Draw ingredient as a labeled rounded rectangle
+            cv2.rectangle(frame, (ix-50+3, iy-38+3), (ix+50+3, iy+38+3), (18,16,14), -1)
+            cv2.rectangle(frame, (ix-50, iy-38), (ix+50, iy+38), ing_col, -1)
+            cv2.rectangle(frame, (ix-50, iy-38), (ix+50, iy+38),
+                          tuple(max(0,c-40) for c in ing_col), 3)
+            _shadow_text(frame, ing_name, ix, iy-10, 0.50,
+                         (30,30,30), 1, center=True)
+
+            # Grab ring if not grabbed
+            if not self._mx_grabbed:
+                ring_r = int(52 + 8*abs(math.sin(t*5)))
+                cv2.circle(frame, (ix, iy), ring_r, (0,200,255), 2, cv2.LINE_AA)
+                _shadow_text(frame, 'GRAB', ix, iy - ring_r - 12,
+                             0.55, (0,200,255), 1, center=True)
+
+        # ── Progress + HUD ────────────────────────────────────────────────────
+        _shadow_text(frame, f'{self._mx_added} / {len(_MX_INGREDIENTS)}  added',
+                     w//2, 45, 0.85, (255, 230, 100), 2, center=True)
+        _shadow_text(frame, 'Add ingredients only when GREEN',
+                     w//2, h-32, 0.58, (190, 200, 215), 1, center=True)
+        return frame
