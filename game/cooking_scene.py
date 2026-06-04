@@ -1635,7 +1635,7 @@ class CookingScene(BaseMiniGame):
                 self._sk_flip_prev_y = None
                 self._flash_event('NICE!', (80, 220, 160), 12)
                 if self._sk_idx >= _SK_ACTION_N:
-                    self._phase = 'grab_spatula'
+                    self._phase = 'complete'
             return
 
         if self._sk_idx >= _SK_ACTION_N:

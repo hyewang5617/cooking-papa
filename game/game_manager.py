@@ -196,8 +196,10 @@ class GameManager:
         self._tut_btn_held      = 0
         self._tut_knife_pos     = [280, 360]
         # Menu button grab state
-        self._menu_btn_hold    = [0, 0, 0]   # hold frames per button (START, TUTORIAL, EXIT)
-        self._MENU_HOLD_FRAMES = 22           # frames to hold over button to activate
+        self._menu_btn_hold    = [0, 0, 0]
+        self._MENU_HOLD_FRAMES = 22
+        # Stage select grab state
+        self._stage_btn_hold   = [0, 0]   # [pancake, steak]
 
     # ──────────────────────────────────────────────────────────── public ──────
 
@@ -214,9 +216,10 @@ class GameManager:
         bg = get_kitchen_bg(w, h).copy()     # kitchen background for display
 
         output = {
-            'MENU':       self._menu,
-            'TUTORIAL':   self._tutorial,
-            'COUNTDOWN':  self._countdown,
+            'MENU':         self._menu,
+            'STAGE_SELECT': self._stage_select,
+            'TUTORIAL':     self._tutorial,
+            'COUNTDOWN':    self._countdown,
             'PLAYING':    self._playing,
             'RESULT':     self._result,
             'NAME_INPUT': self._name_input,
@@ -245,8 +248,15 @@ class GameManager:
             self._tutorial_idx = 0
             self.state = 'TUTORIAL'
 
-        elif self.state == 'MENU' and key == 13:   # Enter = skip tutorial
-            self._begin_countdown()
+        elif self.state == 'MENU' and key == 13:   # Enter → stage select
+            self.state = 'STAGE_SELECT'
+            self._stage_btn_hold = [0, 0]
+
+        elif self.state == 'STAGE_SELECT':
+            if key == 27 or key == ord('q'):   # ESC → back to menu
+                self.state = 'MENU'
+            elif key == 13:                    # Enter → steak (only stage available)
+                self._begin_countdown()
 
         elif self.state == 'TUTORIAL':
             if key == ord(' '):
@@ -391,7 +401,8 @@ class GameManager:
                               (bx_btn+7+bar_w, btn_y+btn_h-4), (255,255,255), -1)
 
         if activated == 0:
-            self._begin_countdown()
+            self.state = 'STAGE_SELECT'
+            self._stage_btn_hold = [0, 0]
         elif activated == 1:
             self._tutorial_idx = 0
             self.state = 'TUTORIAL'
@@ -409,6 +420,99 @@ class GameManager:
         draw_panel(frame, 0, h - 40, w, 40, alpha=0.75)
         draw_text_centered(frame, f'DEBUG:  {hint}',
                            h - 18, scale=0.42, color=(120, 120, 140), thickness=1)
+        return frame
+
+    def _stage_select(self, frame):
+        import math as _math
+        h, w = frame.shape[:2]
+        t    = time.time()
+
+        # Dark overlay
+        frame[:] = (22, 20, 18)
+
+        # Title
+        draw_text_centered(frame, 'Select  Stage', 60, scale=1.1,
+                           color=COLOR_PRIMARY, thickness=2)
+
+        # Card definitions: (label, subtitle, locked)
+        stages = [
+            ('Pancake',        'Coming  Soon!', True),
+            ('Salisbury Steak', 'Play Now!',    False),
+        ]
+        card_w, card_h = 480, 420
+        gap            = 60
+        total_w        = 2 * card_w + gap
+        x0             = (w - total_w) // 2
+        card_y         = h // 2 - card_h // 2
+
+        hand_sx, hand_sy, hand_gripped = -1, -1, False
+        if self.hand_states:
+            hs = self.hand_states[0]
+            if hs.detected:
+                hand_sx, hand_sy, hand_gripped = hs.screen_x, hs.screen_y, hs.gripped
+
+        activated = -1
+        for bi, (label, sub, locked) in enumerate(stages):
+            cx_c = x0 + bi * (card_w + gap) + card_w // 2
+            cy_c = h // 2
+
+            over = (not locked and
+                    x0 + bi*(card_w+gap) <= hand_sx <= x0 + bi*(card_w+gap) + card_w and
+                    card_y <= hand_sy <= card_y + card_h and hand_gripped)
+
+            if over:
+                self._stage_btn_hold[bi] = min(self._stage_btn_hold[bi] + 1, self._MENU_HOLD_FRAMES + 1)
+            else:
+                self._stage_btn_hold[bi] = max(0, self._stage_btn_hold[bi] - 2)
+
+            hold_frac = self._stage_btn_hold[bi] / self._MENU_HOLD_FRAMES
+            if hold_frac >= 1.0 and not locked:
+                activated = bi
+
+            # Card background
+            pulse = int(8 * abs(_math.sin(t * 4))) if over else 0
+            base_col = (45, 42, 38) if not locked else (30, 28, 26)
+            border_col = COLOR_PRIMARY if over else ((100, 100, 110) if locked else (80, 85, 95))
+            bx = x0 + bi * (card_w + gap)
+            cv2.rectangle(frame, (bx - pulse, card_y - pulse),
+                          (bx + card_w + pulse, card_y + card_h + pulse), base_col, -1)
+            cv2.rectangle(frame, (bx - pulse, card_y - pulse),
+                          (bx + card_w + pulse, card_y + card_h + pulse), border_col, 3)
+
+            # Stage icon
+            icon_cy = card_y + card_h // 2 - 40
+            if bi == 0:   # Pancake icon
+                _draw_pancake_icon(frame, cx_c, icon_cy)
+            else:         # Steak icon
+                _draw_steak_icon(frame, cx_c, icon_cy)
+
+            # Label below icon (both cards)
+            if locked:
+                (tw, th), _ = cv2.getTextSize(label, FONT, 0.90, 2)
+                cv2.putText(frame, label, (cx_c - tw//2, card_y + card_h - 88),
+                            FONT, 0.90, (140, 140, 160), 2, cv2.LINE_AA)
+            if not locked:
+                # Label centered within the card
+                for txt, scale, col, y_off in [
+                    (label, 0.90, COLOR_WHITE,   card_y + card_h - 88),
+                    (sub,   0.60, COLOR_SUCCESS,  card_y + card_h - 52),
+                ]:
+                    (tw, th), _ = cv2.getTextSize(txt, FONT, scale, 2)
+                    cv2.putText(frame, txt, (cx_c - tw//2, y_off),
+                                FONT, scale, col, 2, cv2.LINE_AA)
+                # Hold bar
+                if hold_frac > 0:
+                    bar_w = int((card_w - 40) * hold_frac)
+                    cv2.rectangle(frame,
+                                  (bx + 20, card_y + card_h - 28),
+                                  (bx + 20 + bar_w, card_y + card_h - 16),
+                                  COLOR_PRIMARY, -1)
+
+        if activated == 1:   # Steak selected
+            self._begin_countdown()
+
+        draw_text_centered(frame, 'Grip  over  a  card  to  select  |  ESC: back',
+                           h - 28, scale=0.55, color=COLOR_GREY, thickness=1)
         return frame
 
     def _tutorial(self, frame):
@@ -769,4 +873,45 @@ def _draw_broccoli(frame, cx, cy, size=75):
     # Outline
     cv2.ellipse(frame, (cx, cy - int(s*0.18)), (int(s*0.72), int(s*0.62)),
                 0, 0, 360, (18, 90, 35), 3)
+
+
+def _draw_steak_icon(frame, cx, cy, size=90):
+    """Simple steak shape for stage select card."""
+    s = size
+    pts = np.array([
+        [cx-s,    cy+int(s*0.2)],  [cx-int(s*0.75), cy-int(s*0.6)],
+        [cx-int(s*0.15), cy-int(s*0.75)], [cx+int(s*0.45), cy-int(s*0.65)],
+        [cx+s,    cy-int(s*0.15)], [cx+int(s*1.05), cy+int(s*0.3)],
+        [cx+int(s*0.5),  cy+int(s*0.65)], [cx-int(s*0.25), cy+int(s*0.7)],
+        [cx-int(s*0.8),  cy+int(s*0.5)],
+    ], np.int32)
+    cv2.fillPoly(frame, [pts + np.array([3,4])], (18,15,12))
+    cv2.fillPoly(frame, [pts], (65, 88, 168))
+    # Grill marks
+    for gx in range(cx-int(s*0.7), cx+int(s*0.9), int(s*0.4)):
+        cv2.line(frame, (gx-int(s*0.18), cy+int(s*0.3)),
+                 (gx+int(s*0.18), cy-int(s*0.3)), (35, 55, 110), 4)
+    cv2.polylines(frame, [pts], True, (40, 60, 120), 3)
+
+
+def _draw_pancake_icon(frame, cx, cy, size=80):
+    """Simple cute pancake stack."""
+    s = size
+    for i in range(3):
+        oy = cy + int(s*0.3) - i * int(s*0.45)
+        rx, ry = int(s*0.95), int(s*0.28)
+        col = (50 - i*3, 148 - i*5, 215 - i*5)
+        cv2.ellipse(frame, (cx+3, oy+5), (rx, ry), 0, 0, 360, (15,12,10), -1)
+        cv2.ellipse(frame, (cx, oy), (rx, ry), 0, 0, 360, col, -1)
+        cv2.ellipse(frame, (cx-int(rx*0.3), oy-int(ry*0.3)),
+                    (int(rx*0.4), int(ry*0.4)), 0, 0, 360,
+                    tuple(min(255,c+30) for c in col), -1)
+        cv2.ellipse(frame, (cx, oy), (rx, ry), 0, 0, 360,
+                    tuple(max(0,c-30) for c in col), 2)
+    # Butter on top
+    top_y = cy + int(s*0.3) - 2*int(s*0.45) - int(s*0.08)
+    cv2.rectangle(frame, (cx-int(s*0.18), top_y-int(s*0.1)),
+                  (cx+int(s*0.18), top_y+int(s*0.1)), (72, 220, 248), -1)
+    cv2.rectangle(frame, (cx-int(s*0.18), top_y-int(s*0.1)),
+                  (cx+int(s*0.18), top_y+int(s*0.1)), (48, 185, 218), 2)
 
