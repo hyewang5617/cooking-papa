@@ -110,7 +110,7 @@ _TOSS_BALL_R   = 72     # ball base radius
 _TOSS_ZONE_R   = 140    # catch zone radius
 _TOSS_SPEED    = 10     # pixels per frame
 _TOSS_SWIPE_PX = 22     # screen px/frame to count as swipe
-_TOSS_TARGET   = 6      # catches needed
+_TOSS_TARGET   = 15     # catches needed
 
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
@@ -159,7 +159,7 @@ class CookingScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'place_onion'   # NEW entry point
+        self._phase     = 'toss_meat'   # NEW entry point
         self._held_tool = None
         self._held_by   = -1
 
@@ -244,13 +244,16 @@ class CookingScene(BaseMiniGame):
         self._fry_spatula_hand = -1
 
         # Toss meat state
-        self._toss_ball_x   = float(_TOSS_L_X + (_TOSS_R_X - _TOSS_L_X) // 2)
-        self._toss_ball_vx  = float(_TOSS_SPEED)
-        self._toss_count    = 0
-        self._toss_flat     = 0.0
-        self._toss_anim     = 0
-        self._toss_catch_cd = 0
-        self._toss_prev_sx  = {}   # {hand_idx: prev_screen_x}
+        self._toss_ball_x      = float(_TOSS_L_X)
+        self._toss_ball_vx     = 0.0
+        self._toss_moving      = False
+        self._toss_count       = 0
+        self._toss_flat        = 0.0
+        self._toss_anim        = 0
+        self._toss_catch_cd    = 0
+        self._toss_prev_sx     = {}
+        self._toss_cur_speed   = float(_TOSS_SPEED)
+        self._toss_arrive_time = 0.0
 
         # Knead state
         self._knead_sub           = 'pour_onion'
@@ -288,6 +291,27 @@ class CookingScene(BaseMiniGame):
     @property
     def required_hands(self):
         return 2 if self._phase == 'toss_meat' else 1
+
+    # Debug shortcut: jump to any phase instantly
+    _DEBUG_PHASES = [
+        'place_onion', 'peel_skin', 'slice_onion', 'bowl_drop',
+        'onion_fry', 'meat_mix', 'knead', 'toss_meat',
+        'grab_spatula', 'stirring', 'grab_pan', 'flipping',
+    ]
+
+    def jump_to_phase(self, phase):
+        self._phase = phase
+        self._begin_timer()
+        if phase == 'onion_fry':
+            self._init_onion()
+        elif phase == 'meat_mix':
+            self._init_meat_mix()
+        elif phase == 'knead':
+            self._init_knead()
+        elif phase == 'toss_meat':
+            self._init_toss_meat()
+        elif phase == 'bowl_drop':
+            self._init_bowl_pieces()
 
     @property
     def progress_text(self):
@@ -862,22 +886,22 @@ class CookingScene(BaseMiniGame):
 
             # Left demo hand
             if at_left:
-                # Ball arrived: swipe RIGHT
+                # Ball arrived: swipe RIGHT (open hand)
                 wave = math.sin(t * 8)
                 off  = int(50 * wave)
-                _demo_fist(frame, _TOSS_L_X + off, _TOSS_Y, openness=0.0)
+                _demo_fist(frame, _TOSS_L_X + off, _TOSS_Y, openness=1.0)
             else:
-                # Waiting: gentle hover
-                _demo_fist(frame, _TOSS_L_X, _TOSS_Y + int(12 * math.sin(t * 2)), openness=0.3)
+                # Waiting: open hand hover
+                _demo_fist(frame, _TOSS_L_X, _TOSS_Y + int(12 * math.sin(t * 2)), openness=1.0)
 
             # Right demo hand
             if at_right:
-                # Ball arrived: swipe LEFT
+                # Ball arrived: swipe LEFT (open hand)
                 wave = math.sin(t * 8)
                 off  = int(50 * wave)
-                _demo_fist(frame, _TOSS_R_X - off, _TOSS_Y, openness=0.0)
+                _demo_fist(frame, _TOSS_R_X - off, _TOSS_Y, openness=1.0)
             else:
-                _demo_fist(frame, _TOSS_R_X, _TOSS_Y + int(12 * math.sin(t * 2 + 1)), openness=0.3)
+                _demo_fist(frame, _TOSS_R_X, _TOSS_Y + int(12 * math.sin(t * 2 + 1)), openness=1.0)
 
         elif p == 'stirring':
             # Fist orbiting the pot clockwise
@@ -1354,14 +1378,16 @@ class CookingScene(BaseMiniGame):
     # ── Toss Meat ────────────────────────────────────────────────────────────
 
     def _init_toss_meat(self):
-        cx = (_TOSS_L_X + _TOSS_R_X) // 2
-        self._toss_ball_x   = float(cx)
-        self._toss_ball_vx  = float(_TOSS_SPEED)
-        self._toss_count    = 0
-        self._toss_flat     = 0.0
-        self._toss_anim     = 0
-        self._toss_catch_cd = 0
-        self._toss_prev_sx  = {}
+        self._toss_ball_x      = float(_TOSS_L_X)
+        self._toss_ball_vx     = 0.0
+        self._toss_moving      = False
+        self._toss_count       = 0
+        self._toss_flat        = 0.0
+        self._toss_anim        = 0
+        self._toss_catch_cd    = 0
+        self._toss_prev_sx     = {}
+        self._toss_cur_speed   = float(_TOSS_SPEED)  # accumulated speed
+        self._toss_arrive_time = time.time()          # when ball last stopped
 
     def _do_toss_meat(self, hands):
         if self._toss_catch_cd > 0:
@@ -1369,41 +1395,65 @@ class CookingScene(BaseMiniGame):
         if self._toss_anim > 0:
             self._toss_anim -= 1
 
-        self._toss_ball_x += self._toss_ball_vx
+        _TIMEOUT   = 1.0   # seconds before speed resets
+        _SPEED_MUL = 5.0   # bonus px per second of reaction time saved
 
-        # Bounce at boundaries
-        if self._toss_ball_x >= _TOSS_R_X:
-            self._toss_ball_x = float(_TOSS_R_X)
-            self._toss_ball_vx = -abs(self._toss_ball_vx)
-        elif self._toss_ball_x <= _TOSS_L_X:
-            self._toss_ball_x = float(_TOSS_L_X)
-            self._toss_ball_vx = abs(self._toss_ball_vx)
+        # Move ball if in flight
+        if self._toss_moving:
+            self._toss_ball_x += self._toss_ball_vx
+            if self._toss_ball_vx > 0 and self._toss_ball_x >= _TOSS_R_X:
+                self._toss_ball_x      = float(_TOSS_R_X)
+                self._toss_ball_vx     = 0.0
+                self._toss_moving      = False
+                self._toss_arrive_time = time.time()
+            elif self._toss_ball_vx < 0 and self._toss_ball_x <= _TOSS_L_X:
+                self._toss_ball_x      = float(_TOSS_L_X)
+                self._toss_ball_vx     = 0.0
+                self._toss_moving      = False
+                self._toss_arrive_time = time.time()
 
-        at_right = self._toss_ball_x >= _TOSS_R_X - 90
-        at_left  = self._toss_ball_x <= _TOSS_L_X + 90
+        # Timeout: speed resets if player didn't throw in time
+        if not self._toss_moving:
+            elapsed = time.time() - self._toss_arrive_time
+            if elapsed >= _TIMEOUT:
+                self._toss_cur_speed = float(_TOSS_SPEED)
 
-        if (at_right or at_left) and self._toss_catch_cd == 0:
+        # Throw detection
+        if not self._toss_moving and self._toss_catch_cd == 0:
+            ball_at_left  = self._toss_ball_x <= _TOSS_L_X + 10
+            ball_at_right = self._toss_ball_x >= _TOSS_R_X - 10
+
             for i, hand in enumerate(hands):
-                if not hand.detected or not hand.gripped:
+                if not hand.detected:
                     self._toss_prev_sx.pop(i, None)
                     continue
-                hx = hand.screen_x
+                hx   = hand.screen_x
                 prev = self._toss_prev_sx.get(i, hx)
                 self._toss_prev_sx[i] = hx
-                dvx = hx - prev  # screen px per frame
+                dvx  = hx - prev
 
-                in_zone = (at_right and hx > 880) or (at_left and hx < 400)
-                if not in_zone:
-                    continue
-                # Correct swipe: opposite direction to ball travel
-                swipe_ok = (at_right and dvx < -_TOSS_SWIPE_PX) or \
-                           (at_left  and dvx >  _TOSS_SWIPE_PX)
-                if swipe_ok:
+                threw = False
+                if ball_at_left  and hx < 450 and dvx >  _TOSS_SWIPE_PX:
+                    threw = True; direction = 1
+                elif ball_at_right and hx > 830 and dvx < -_TOSS_SWIPE_PX:
+                    threw = True; direction = -1
+
+                if threw:
+                    # Speed based on reaction time
+                    reaction = time.time() - self._toss_arrive_time
+                    if reaction >= _TIMEOUT:
+                        self._toss_cur_speed = float(_TOSS_SPEED)
+                    else:
+                        bonus = (_TIMEOUT - reaction) * _SPEED_MUL
+                        self._toss_cur_speed += bonus
+
+                    self._toss_ball_vx  = direction * self._toss_cur_speed
+                    self._toss_moving   = True
                     self._toss_count   += 1
                     self._toss_flat     = min(self._toss_count / _TOSS_TARGET, 1.0)
-                    self._toss_anim     = 20
-                    self._toss_catch_cd = 28
-                    self._flash_event('CATCH!', (80, 230, 120), 12)
+                    self._toss_anim     = 18
+                    self._toss_catch_cd = 22
+                    self._flash_event('THROW!', (80, 230, 120), 10)
                     if self._toss_count >= _TOSS_TARGET:
                         self._phase = 'grab_spatula'
                         return ['toss']
@@ -1419,85 +1469,64 @@ class CookingScene(BaseMiniGame):
         t  = time.time()
         fh, fw = frame.shape[:2]
 
-        # Which side is ball heading toward?
-        going_right  = self._toss_ball_vx > 0
-        at_right     = self._toss_ball_x >= _TOSS_R_X - 90
-        at_left      = self._toss_ball_x <= _TOSS_L_X + 90
-        active_left  = not going_right  # ball heading left → left zone is active
-        active_right = going_right
+        ball_at_left  = self._toss_ball_x <= _TOSS_L_X + 10
+        ball_at_right = self._toss_ball_x >= _TOSS_R_X - 10
+        in_flight     = self._toss_moving
 
         # ── Zone circles ─────────────────────────────────────────────────────
-        for zx, is_active, swipe_dir_lbl, arrow_dir in [
-            (_TOSS_L_X,  active_left,  '-->',  1),
-            (_TOSS_R_X,  active_right, '<--', -1),
+        for zx, has_ball, swipe_lbl, arrow_dir in [
+            (_TOSS_L_X, ball_at_left,  'Swipe -->',  1),
+            (_TOSS_R_X, ball_at_right, 'Swipe <--', -1),
         ]:
-            # Brighter ring when ball is heading this way
-            pulse     = int(10 * abs(math.sin(t * 5))) if is_active else 0
-            ring_col  = (80, 220, 255) if is_active else (60, 80, 110)
-            ring_thick = 3 if is_active else 1
+            pulse      = int(12 * abs(math.sin(t * 5))) if has_ball else 0
+            ring_col   = (80, 220, 255) if has_ball else (55, 75, 100)
+            ring_thick = 3 if has_ball else 1
             cv2.circle(frame, (zx, _TOSS_Y), _TOSS_ZONE_R + pulse, ring_col, ring_thick)
-
-            # "Place hand here" label
-            place_col = (80, 220, 255) if is_active else (100, 120, 150)
             _shadow_text(frame, 'Place hand here', zx, _TOSS_Y + _TOSS_ZONE_R + 28,
-                         0.55, place_col, 1, center=True)
-
-            # Swipe direction arrow — large and obvious when active
-            if is_active:
-                arrow_pulse = int(8 * abs(math.sin(t * 6)))
-                ay = _TOSS_Y
-                ax1 = zx - arrow_dir * (60 + arrow_pulse)
-                ax2 = zx + arrow_dir * (60 + arrow_pulse)
-                cv2.arrowedLine(frame, (ax1, ay), (ax2, ay),
-                                (80, 255, 130), 5, tipLength=0.28)
-                _shadow_text(frame, f'SWIPE  {swipe_dir_lbl}',
-                             zx, _TOSS_Y - _TOSS_ZONE_R - 22,
-                             0.75, (80, 255, 130), 2, center=True)
-            else:
-                # Dim static arrow hint
+                         0.52, ring_col, 1, center=True)
+            if has_ball and not in_flight:
+                ap = int(10 * abs(math.sin(t * 6)))
                 cv2.arrowedLine(frame,
-                                (zx - arrow_dir * 40, _TOSS_Y),
-                                (zx + arrow_dir * 40, _TOSS_Y),
-                                (70, 90, 110), 2, tipLength=0.25)
+                                (zx - arrow_dir * (55 + ap), _TOSS_Y),
+                                (zx + arrow_dir * (55 + ap), _TOSS_Y),
+                                (80, 255, 130), 5, tipLength=0.28)
+                _shadow_text(frame, swipe_lbl, zx, _TOSS_Y - _TOSS_ZONE_R - 22,
+                             0.75, (80, 255, 130), 2, center=True)
 
-        # ── Ball position with parabolic arc ─────────────────────────────────
+        # ── Ball arc position ─────────────────────────────────────────────────
         span   = float(_TOSS_R_X - _TOSS_L_X)
         t_pos  = (self._toss_ball_x - _TOSS_L_X) / span
         arc_h  = 110
         ball_y = int(_TOSS_Y - arc_h * 4 * t_pos * (1 - t_pos))
         bx     = int(self._toss_ball_x)
 
-        # ── Shape ─────────────────────────────────────────────────────────────
+        # ── Shape: VERTICAL elongation ────────────────────────────────────────
         f      = self._toss_flat
-        semi_a = int(_TOSS_BALL_R * (1 + f * 1.3))
-        semi_b = int(max(8, _TOSS_BALL_R * (1 - f * 0.88)))
+        semi_a = int(max(12, _TOSS_BALL_R * (1 - f * 0.70)))  # narrows horizontally
+        semi_b = int(_TOSS_BALL_R * (1 + f * 1.40))            # grows vertically
         if self._toss_anim > 0:
-            sq     = self._toss_anim / 20
-            semi_a = int(semi_a * (1 + sq * 0.35))
-            semi_b = int(max(6, semi_b * (1 - sq * 0.25)))
+            sq     = self._toss_anim / 18
+            semi_a = int(semi_a * (1 - sq * 0.20))
+            semi_b = int(semi_b * (1 + sq * 0.30))
 
         meat_col = (68, 85, 190)
-        cv2.ellipse(frame, (bx + 4, ball_y + 5), (semi_a + 4, semi_b + 4),
+        cv2.ellipse(frame, (bx + 4, ball_y + 5), (semi_a + 3, semi_b + 3),
                     0, 0, 360, (20, 25, 80), -1)
         cv2.ellipse(frame, (bx, ball_y), (semi_a, semi_b), 0, 0, 360, meat_col, -1)
-        cv2.ellipse(frame, (bx - semi_a//4, ball_y - semi_b//3),
-                    (max(4, semi_a//3), max(3, semi_b//3)), 0, 0, 360, (110, 128, 225), -1)
+        cv2.ellipse(frame, (bx - semi_a//4, ball_y - semi_b//4),
+                    (max(4, semi_a//3), max(4, semi_b//4)), 0, 0, 360, (110, 128, 225), -1)
         cv2.ellipse(frame, (bx, ball_y), (semi_a, semi_b), 0, 0, 360, (45, 55, 140), 2)
 
-        # Shape progress label
         if f > 0.05:
-            lbl = 'PATTY!' if f >= 0.99 else f'Flat: {int(f*100)}%'
-            _shadow_text(frame, lbl, bx, ball_y - semi_b - 30,
+            lbl = 'PATTY!' if f >= 0.99 else f'{int(f*100)}%'
+            _shadow_text(frame, lbl, bx, ball_y - semi_b - 28,
                          0.65, (255, 220, 80), 1, center=True)
 
-        # ── Top instruction banner ────────────────────────────────────────────
-        _panel(frame, 0, 0, fw, 52)
-        _shadow_text(frame,
-                     'Grip + Swipe OPPOSITE direction when ball arrives!',
-                     fw // 2, 30, 0.72, (220, 220, 240), 1, center=True)
-
-        # Catch counter
-        _shadow_text(frame, f'Catch: {self._toss_count} / {_TOSS_TARGET}',
+        # ── Instruction banner ────────────────────────────────────────────────
+        _panel(frame, 0, 0, fw, 48)
+        _shadow_text(frame, 'Move hand toward the OTHER side to throw!',
+                     fw // 2, 28, 0.70, (220, 220, 240), 1, center=True)
+        _shadow_text(frame, f'Throw: {self._toss_count} / {_TOSS_TARGET}',
                      fw // 2, fh - 35, 1.0, (255, 230, 100), 2, center=True)
 
     # ── Knead Stage ──────────────────────────────────────────────────────────

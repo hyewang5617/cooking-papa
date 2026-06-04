@@ -191,6 +191,7 @@ class GameManager:
         self._last_game_score  = 0
         self._player_name      = ''
         self._tutorial_idx     = 0
+        self._debug_jump_idx   = -1
         self._tut_knife_grabbed = False
         self._tut_btn_held      = 0
         self._tut_knife_pos     = [280, 360]
@@ -228,6 +229,18 @@ class GameManager:
         return output
 
     def handle_key(self, key):
+        # ── DEBUG: number keys 1-9 jump to specific phase (MENU or PLAYING) ──
+        if key in range(ord('1'), ord('9') + 1):
+            idx = key - ord('1')
+            if self.state == 'MENU':
+                self._begin_countdown()
+                self._debug_jump_idx = idx
+            elif self.state == 'PLAYING' and self.game and hasattr(self.game, 'jump_to_phase'):
+                phases = self.game._DEBUG_PHASES
+                if idx < len(phases):
+                    self.game.jump_to_phase(phases[idx])
+            return
+
         if self.state == 'MENU' and key == ord(' '):
             self._tutorial_idx = 0
             self.state = 'TUTORIAL'
@@ -279,6 +292,12 @@ class GameManager:
         self.game.start()
         self._game_start_score = self.score.total_score
         self.state = 'PLAYING'
+        # Debug: jump to specific phase if requested
+        if self._debug_jump_idx >= 0:
+            phases = self.game._DEBUG_PHASES
+            if self._debug_jump_idx < len(phases):
+                self.game.jump_to_phase(phases[self._debug_jump_idx])
+            self._debug_jump_idx = -1
 
     def _reset(self):
         self.state        = 'MENU'
@@ -382,6 +401,14 @@ class GameManager:
         draw_text_centered(frame, 'Grip  over  a  button  to  select',
                            btn_y + btn_h + 44, scale=0.68,
                            color=(200, 200, 220), thickness=1)
+
+        # Debug shortcut legend (bottom of screen)
+        from .cooking_scene import CookingScene as _CS
+        phases = _CS._DEBUG_PHASES
+        hint = '  '.join(f'{i+1}:{p.replace("_"," ")}' for i, p in enumerate(phases))
+        draw_panel(frame, 0, h - 40, w, 40, alpha=0.75)
+        draw_text_centered(frame, f'DEBUG:  {hint}',
+                           h - 18, scale=0.42, color=(120, 120, 140), thickness=1)
         return frame
 
     def _tutorial(self, frame):
