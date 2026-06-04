@@ -105,6 +105,23 @@ _KN_SWIPE_PX  = 85     # pixels needed for a valid swipe
 _KN_ARROW_N   = 7
 _KN_DIRS      = ('up', 'down', 'left', 'right')
 
+# ── Cook Steak ───────────────────────────────────────────────────────────────
+_SK_PAN_CX      = 640
+_SK_PAN_CY      = 370
+_SK_PAN_R       = 255
+_SK_AREA_R      = 205
+_SK_PAN_HX      = _SK_PAN_CX                     # handle grab x (bottom)
+_SK_PAN_HY      = _SK_PAN_CY + _SK_PAN_R + 65   # handle grab y (bottom)
+_SK_FLAME_CX    = 105
+_SK_FLAME_CY    = 610
+_SK_FLAME_R     = 55
+_SK_ACTION_N    = 6
+_SK_ACTIONS     = ('shake', 'press', 'flip', 'flame')
+_SK_PRESS_HOLD  = 30    # frames to hold for press
+_SK_SHAKE_PX    = 55    # px per shake stroke
+_SK_SHAKE_N     = 3     # strokes needed for shake
+_SK_FLIP_PX     = 70    # px upward flick
+
 # ── Toss Meat ────────────────────────────────────────────────────────────────
 _TOSS_L_X      = 185    # left catch zone center x
 _TOSS_R_X      = 1095   # right catch zone center x
@@ -147,6 +164,7 @@ _PHASE_HINTS = {
     'meat_mix':         ('Grab  beef  →  drop  in  grinder!', (100, 180, 255)),
     'knead':            ('Knead  the  meat!',              (180, 140, 255)),
     'toss_meat':        ('Swipe  opposite  to  catch!',   (80, 220, 255)),
+    'cook_steak':       ('Follow  the  action!',          (80, 200, 255)),
     'grab_spatula':     ('GRAB the spatula!',           (0, 200, 255)),
     'stirring':         ('Stir in CIRCLES!',        (0, 255, 180)),
     'grab_pan':         ('GRAB the pan!',           (0, 200, 255)),
@@ -163,7 +181,7 @@ class CookingScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'place_onion'   # NEW entry point
+        self._phase     = 'cook_steak'   # NEW entry point
         self._held_tool = None
         self._held_by   = -1
 
@@ -252,6 +270,20 @@ class CookingScene(BaseMiniGame):
         self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
         self._fry_spatula_hand = -1
 
+        # Cook steak state
+        self._sk_queue         = []
+        self._sk_idx           = 0
+        self._sk_cook          = 0.0
+        self._sk_flip_side     = 0
+        self._sk_pan_grabbed   = False
+        self._sk_pan_pos       = [float(_SK_PAN_HX), float(_SK_PAN_HY)]
+        self._sk_press_held    = 0
+        self._sk_shake_ref     = None
+        self._sk_shake_dir     = None
+        self._sk_shake_done    = 0
+        self._sk_flip_prev_y   = None
+        self._sk_action_anim   = 0
+
         # Toss meat state
         self._toss_ball_x      = float(_TOSS_L_X)
         self._toss_ball_vx     = 0.0
@@ -298,6 +330,7 @@ class CookingScene(BaseMiniGame):
             'meat_mix':    self._init_meat_mix,
             'knead':       self._init_knead,
             'toss_meat':   self._init_toss_meat,
+            'cook_steak':  self._init_cook_steak,
         }
         if self._phase in _auto:
             _auto[self._phase]()
@@ -315,6 +348,7 @@ class CookingScene(BaseMiniGame):
     # Debug shortcut: jump to any phase instantly
     _DEBUG_PHASES = [
         'place_onion', 'peel_skin', 'slice_onion', 'dice_onion', 'bowl_drop',
+        'cook_steak',
         'onion_fry', 'meat_mix', 'knead', 'toss_meat',
         'grab_spatula', 'stirring', 'grab_pan', 'flipping',
     ]
@@ -357,6 +391,12 @@ class CookingScene(BaseMiniGame):
             if sub == 'arrows':     return f'Knead  {self._knead_idx}/{_KN_ARROW_N}'
             return 'One  full  turn!'
         if p == 'toss_meat':        return f'Toss  {self._toss_count}/{_TOSS_TARGET}'
+        if p == 'cook_steak':
+            if self._sk_idx < _SK_ACTION_N:
+                act = self._sk_queue[self._sk_idx]
+                labels = {'shake':'Shake Pan','press':'Press Steak','flip':'Flip Steak','flame':'Flame Button'}
+                return f'{labels.get(act,act)}  {self._sk_idx+1}/{_SK_ACTION_N}'
+            return 'Done!'
         if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
         if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
         if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
@@ -413,6 +453,9 @@ class CookingScene(BaseMiniGame):
 
         elif p == 'toss_meat':
             events += self._do_toss_meat(hands)
+
+        elif p == 'cook_steak':
+            self._do_cook_steak(hands)
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -650,6 +693,8 @@ class CookingScene(BaseMiniGame):
             self._draw_knead(frame)
         elif p == 'toss_meat':
             self._draw_toss_meat(frame)
+        elif p == 'cook_steak':
+            self._draw_cook_steak(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
         else:
@@ -1479,7 +1524,8 @@ class CookingScene(BaseMiniGame):
                     self._toss_catch_cd = 22
                     self._flash_event('THROW!', (80, 230, 120), 10)
                     if self._toss_count >= _TOSS_TARGET:
-                        self._phase = 'grab_spatula'
+                        self._phase = 'cook_steak'
+                        self._init_cook_steak()
                         return ['toss']
                     break
         else:
@@ -1552,6 +1598,307 @@ class CookingScene(BaseMiniGame):
                      fw // 2, 28, 0.70, (220, 220, 240), 1, center=True)
         _shadow_text(frame, f'Throw: {self._toss_count} / {_TOSS_TARGET}',
                      fw // 2, fh - 35, 1.0, (255, 230, 100), 2, center=True)
+
+    # ── Cook Steak ───────────────────────────────────────────────────────────
+
+    def _init_cook_steak(self):
+        import random as _rnd
+        first4 = list(_SK_ACTIONS)   # 4가지 액션 각 1번
+        _rnd.shuffle(first4)
+        self._sk_queue        = first4 + ['flip', 'flame']   # 5번째=뒤집기, 6번째=불조절
+        self._sk_idx          = 0
+        self._sk_cook         = 0.0   # only advances on press/flip
+        self._sk_flip_side    = 0
+        self._sk_pan_grabbed  = False
+        self._sk_press_held   = 0
+        self._sk_shake_ref    = None
+        self._sk_shake_dir    = None
+        self._sk_shake_done   = 0
+        self._sk_flip_prev_y  = None
+        self._sk_action_anim  = 0
+        # Animation states
+        self._sk_flip_anim    = 0    # 0=none, 1-40=in air
+        self._sk_steak_x_off  = 0.0  # shake x offset
+        self._sk_steak_y_off  = 0.0  # flip y offset
+
+    def _do_cook_steak(self, hands):
+        # Drive flip animation
+        if self._sk_flip_anim > 0:
+            self._sk_flip_anim -= 1
+            if self._sk_flip_anim == 20:   # midpoint: flip side
+                self._sk_flip_side = 1 - self._sk_flip_side
+                self._sk_cook = min(1.0, self._sk_cook + 0.4)
+            if self._sk_flip_anim == 0:    # animation done: advance
+                self._sk_idx += 1
+                self._sk_action_anim = 10
+                self._sk_pan_grabbed = False
+                self._sk_flip_prev_y = None
+                self._flash_event('NICE!', (80, 220, 160), 12)
+                if self._sk_idx >= _SK_ACTION_N:
+                    self._phase = 'grab_spatula'
+            return
+
+        if self._sk_idx >= _SK_ACTION_N:
+            return
+        if self._sk_action_anim > 0:
+            self._sk_action_anim -= 1
+            return
+
+        act = self._sk_queue[self._sk_idx]
+
+        def _advance():
+            self._sk_idx += 1
+            self._sk_action_anim = 18
+            self._sk_pan_grabbed  = False
+            self._sk_shake_ref    = None
+            self._sk_shake_dir    = None
+            self._sk_shake_done   = 0
+            self._sk_flip_prev_y  = None
+            self._sk_press_held   = 0
+            self._sk_steak_x_off  = 0.0
+            if self._sk_idx >= _SK_ACTION_N:
+                self._phase = 'grab_spatula'
+            else:
+                self._flash_event('NICE!', (80, 220, 160), 12)
+
+        if act == 'shake':
+            for hand in hands:
+                if not hand.detected or not hand.gripped:
+                    if self._sk_pan_grabbed:
+                        self._sk_pan_grabbed = False
+                        self._sk_shake_ref   = None
+                        self._sk_shake_dir   = None
+                    continue
+                if not self._sk_pan_grabbed:
+                    dx = hand.screen_x - _SK_PAN_HX
+                    dy = hand.screen_y - _SK_PAN_HY
+                    if dx*dx + dy*dy < 90**2:
+                        self._sk_pan_grabbed = True
+                    continue
+                sy = hand.screen_y
+                # Steak shakes visually with pan
+                self._sk_steak_x_off = float(hand.screen_x - _SK_PAN_HX) * 0.3
+                if self._sk_shake_ref is None:
+                    self._sk_shake_ref = sy; continue
+                delta = sy - self._sk_shake_ref
+                if self._sk_shake_dir is None:
+                    if delta >  _SK_SHAKE_PX: self._sk_shake_dir='down'; self._sk_shake_ref=sy
+                    elif delta < -_SK_SHAKE_PX: self._sk_shake_dir='up';  self._sk_shake_ref=sy
+                elif self._sk_shake_dir=='down' and delta < -_SK_SHAKE_PX:
+                    self._sk_shake_dir='up'; self._sk_shake_ref=sy
+                    self._sk_shake_done+=1
+                    if self._sk_shake_done >= _SK_SHAKE_N: _advance(); return
+                elif self._sk_shake_dir=='up' and delta > _SK_SHAKE_PX:
+                    self._sk_shake_dir='down'; self._sk_shake_ref=sy
+                    self._sk_shake_done+=1
+                    if self._sk_shake_done >= _SK_SHAKE_N: _advance(); return
+
+        elif act == 'press':
+            has_press = False
+            for hand in hands:
+                if hand.detected and hand.gripped:
+                    dy = hand.screen_y - _SK_PAN_CY
+                    if abs(hand.screen_x - _SK_PAN_CX) < _SK_AREA_R and -30 < dy < _SK_AREA_R:
+                        has_press = True
+            if has_press:
+                self._sk_press_held += 1
+                if self._sk_press_held >= _SK_PRESS_HOLD:
+                    self._sk_cook = min(1.0, self._sk_cook + 0.35)
+                    _advance()
+            else:
+                self._sk_press_held = max(0, self._sk_press_held - 2)
+
+        elif act == 'flip':
+            for hand in hands:
+                if not hand.detected or not hand.gripped:
+                    if self._sk_pan_grabbed:
+                        self._sk_pan_grabbed = False
+                        self._sk_flip_prev_y = None
+                    continue
+                if not self._sk_pan_grabbed:
+                    dx = hand.screen_x - _SK_PAN_HX
+                    dy = hand.screen_y - _SK_PAN_HY
+                    if dx*dx + dy*dy < 90**2:
+                        self._sk_pan_grabbed = True
+                    continue
+                sy = hand.screen_y
+                if self._sk_flip_prev_y is not None:
+                    up_delta = self._sk_flip_prev_y - sy
+                    if up_delta >= _SK_FLIP_PX:
+                        self._sk_flip_anim = 40   # start flip animation
+                        return
+                self._sk_flip_prev_y = sy
+
+        elif act == 'flame':
+            for hand in hands:
+                if hand.detected and hand.gripped:
+                    bx = hand.screen_x - _SK_FLAME_CX
+                    by = hand.screen_y - _SK_FLAME_CY
+                    if bx*bx + by*by < (_SK_FLAME_R + 25)**2:
+                        _advance(); return
+
+    def _draw_cook_steak(self, frame):
+        t   = time.time()
+        cx, cy = _SK_PAN_CX, _SK_PAN_CY
+        cook   = self._sk_cook
+        fh, fw = frame.shape[:2]
+        act    = self._sk_queue[self._sk_idx] if self._sk_idx < _SK_ACTION_N else ''
+
+        # ── Pan y offset (shake / flip) ───────────────────────────────────────
+        flip_frac  = self._sk_flip_anim / 40.0
+        pan_y_off  = 0
+        if act == 'shake' and self._sk_pan_grabbed:
+            pan_y_off = int(18 * math.sin(t * 14))
+        if self._sk_flip_anim > 0:
+            # Pan jumps up on first half, returns second half
+            pan_y_off = int(-35 * math.sin(math.pi * flip_frac))
+
+        pcy = cy + pan_y_off   # pan center y (moved)
+
+        # ── Stove base ───────────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx, cy + _SK_PAN_R + 18), (_SK_PAN_R + 45, 38),
+                    0, 0, 360, (48, 44, 40), -1)
+
+        # ── Pan ───────────────────────────────────────────────────────────────
+        cv2.circle(frame, (cx, pcy), _SK_PAN_R, (36, 32, 28), -1)
+        cv2.circle(frame, (cx, pcy), _SK_PAN_R, (18, 15, 12), 10)
+        sv = int(148 - cook * 20)
+        cv2.circle(frame, (cx, pcy), _SK_AREA_R + 8, (sv, sv+2, sv+4), -1)
+        cv2.circle(frame, (cx, pcy), _SK_AREA_R + 8, (65, 60, 56), 2)
+
+        # Pan handle (bottom, moves with pan)
+        hy1 = pcy + _SK_PAN_R - 10
+        hy2 = pcy + _SK_PAN_R + 120
+        cv2.rectangle(frame, (cx - 24, hy1), (cx + 24, hy2), (32, 28, 24), -1)
+        cv2.rectangle(frame, (cx - 24, hy1), (cx + 24, hy2), (15, 12, 10), 3)
+
+        # ── Flames (fixed to stove) ───────────────────────────────────────────
+        fl_span = int(_SK_PAN_R * 1.55)
+        for fi in range(8):
+            fx  = cx - fl_span//2 + fi * (fl_span//7)
+            flk = int(12 * math.sin(t * 9.0 + fi * 1.4))
+            fy0 = cy + _SK_PAN_R + 5
+            cv2.ellipse(frame, (fx, fy0), (6, 14 + flk//2), 0, 0, 360, (185, 90, 15), -1)
+            pts_f = np.array([[fx-10, fy0],[fx, fy0-40-flk],[fx+10, fy0]], np.int32)
+            cv2.fillPoly(frame, [pts_f], (0, int(140+flk*3), 245))
+
+        # ── Steak animations ─────────────────────────────────────────────────
+        press_frac  = self._sk_press_held / _SK_PRESS_HOLD if act == 'press' else 0.0
+        flip_height = int(90 * math.sin(math.pi * (1 - flip_frac))) if self._sk_flip_anim > 0 else 0
+        shake_x = int(self._sk_steak_x_off) if act == 'shake' else 0
+
+        # Squish: wider + shorter when pressing
+        squish_x = int(25 * press_frac)
+        squish_y = int(18 * press_frac)
+
+        # Steak center: rides on pan (pan_y_off) + flip arc
+        scx = cx + shake_x
+        scy = pcy - flip_height   # steak sits on pan, both move together except flip arc
+
+        # Color: only changes on press/flip — kept light
+        col = (85, 100, 200)   # raw: light pink (BGR)
+        if cook > 0:
+            if cook < 0.5:
+                tc  = cook / 0.5
+                col = (int(85+tc*5), int(100+tc*15), int(200-tc*35))   # → lighter tan
+            else:
+                tc  = (cook-0.5)/0.5
+                col = (int(90-tc*20), int(115-tc*25), int(165-tc*30))  # → medium brown, stays light
+
+        # Flip mid-point: show cooked side (darker)
+        if self._sk_flip_side == 1:
+            col = tuple(max(0, c-45) for c in col)
+
+        col2 = tuple(max(0, c-35) for c in col)
+
+        steak_pts = np.array([
+            [scx-100-squish_x, scy+18-squish_y],
+            [scx-75,           scy-52+squish_y],
+            [scx-15,           scy-68+squish_y],
+            [scx+45,           scy-62+squish_y],
+            [scx+95,           scy-18],
+            [scx+108+squish_x, scy+28-squish_y],
+            [scx+48+squish_x,  scy+62-squish_y],
+            [scx-28,           scy+66-squish_y],
+            [scx-82-squish_x,  scy+48],
+        ], np.int32)
+
+        # During flip: scale x based on rotation (cos effect)
+        if self._sk_flip_anim > 0:
+            cos_a = abs(math.cos(math.pi * (1 - flip_frac)))
+            steak_pts[:, 0] = scx + ((steak_pts[:, 0] - scx) * cos_a).astype(int)
+
+        cv2.fillPoly(frame, [steak_pts + np.array([4,5])], (18, 15, 12))
+        cv2.fillPoly(frame, [steak_pts], col)
+        if cook > 0.05:
+            for gx in range(scx-72, scx+80, 28):
+                cv2.line(frame, (gx-18, scy+30-squish_y),
+                         (gx+18, scy-30+squish_y), col2, 4)
+        cv2.polylines(frame, [steak_pts], True, col2, 3)
+
+        # ── Pan grab ring (follows pan y) ────────────────────────────────────
+        if not self._sk_pan_grabbed and act in ('shake', 'flip') and self._sk_flip_anim == 0:
+            _grab_ring(frame, [_SK_PAN_HX, _SK_PAN_HY + pan_y_off])
+
+        # ── Flame button ──────────────────────────────────────────────────────
+        show_flame = act == 'flame'
+        pulse = int(9 * abs(math.sin(t*5))) if show_flame else 0
+        bcol  = (0, 185, 255) if show_flame else (50, 50, 68)
+        cv2.circle(frame, (_SK_FLAME_CX, _SK_FLAME_CY), _SK_FLAME_R+pulse, bcol, -1)
+        cv2.circle(frame, (_SK_FLAME_CX, _SK_FLAME_CY), _SK_FLAME_R+pulse, (255,255,255), 2)
+        fpts = np.array([
+            [_SK_FLAME_CX,      _SK_FLAME_CY-28],
+            [_SK_FLAME_CX-14,   _SK_FLAME_CY+6],
+            [_SK_FLAME_CX-7,    _SK_FLAME_CY+18],
+            [_SK_FLAME_CX+7,    _SK_FLAME_CY+18],
+            [_SK_FLAME_CX+14,   _SK_FLAME_CY+6],
+        ], np.int32)
+        cv2.fillPoly(frame, [fpts], (255,255,255) if show_flame else (100,100,120))
+        if show_flame:
+            ring_r = int(_SK_FLAME_R+18+10*abs(math.sin(t*5)))
+            cv2.circle(frame, (_SK_FLAME_CX, _SK_FLAME_CY), ring_r, (0,200,255), 3, cv2.LINE_AA)
+            _shadow_text(frame, 'GRAB!', _SK_FLAME_CX, _SK_FLAME_CY-ring_r-12,
+                         0.6, (0,200,255), 1, center=True)
+
+        # ── Action instruction + tutorial ─────────────────────────────────────
+        _panel(frame, 0, 0, fw, 52)
+        if self._sk_idx < _SK_ACTION_N:
+            labels = {'shake':'Grab handle → Shake UP & DOWN  x3',
+                      'press':'Grip near steak → Hold DOWN',
+                      'flip': 'Grab handle → Flick UP sharply',
+                      'flame':'Grip the FLAME button'}
+            _shadow_text(frame, labels.get(act,''), fw//2, 30,
+                         0.75, (80, 220, 255), 1, center=True)
+
+        # Demo arrow per action
+        if act == 'shake' and not self._sk_pan_grabbed:
+            pass   # grab ring already shown
+        elif act == 'shake' and self._sk_pan_grabbed:
+            for ay in [cy-60, cy, cy+60]:
+                cv2.arrowedLine(frame, (cx-200, ay), (cx-200, ay-50),
+                                (80,220,255), 2, tipLength=0.4)
+                cv2.arrowedLine(frame, (cx-200, ay), (cx-200, ay+50),
+                                (80,220,255), 2, tipLength=0.4)
+        elif act == 'press':
+            cv2.arrowedLine(frame, (cx+180, cy-80), (cx+180, cy+20),
+                            (80,220,255), 3, tipLength=0.25)
+            _shadow_text(frame, 'HOLD', cx+180, cy+45, 0.6, (80,220,255), 1, center=True)
+        elif act == 'flip' and self._sk_pan_grabbed and self._sk_flip_anim == 0:
+            cv2.arrowedLine(frame, (cx-180, cy+60), (cx-180, cy-60),
+                            (80,220,255), 3, tipLength=0.3)
+
+        # Progress dots
+        for di in range(_SK_ACTION_N):
+            dx = fw//2 - (_SK_ACTION_N-1)*22 + di*44
+            dc = (80,220,140) if di < self._sk_idx else (60,60,80)
+            cv2.circle(frame, (dx, fh-28), 10, dc, -1)
+            cv2.circle(frame, (dx, fh-28), 10, (180,190,200), 2)
+
+        # Press hold bar
+        if act == 'press' and self._sk_press_held > 0:
+            bar_w = int((fw-80) * self._sk_press_held / _SK_PRESS_HOLD)
+            cv2.rectangle(frame, (40, fh-58), (40+bar_w, fh-46), (80,220,140), -1)
+            cv2.rectangle(frame, (40, fh-58), (fw-40, fh-46), (100,110,120), 2)
 
     # ── Knead Stage ──────────────────────────────────────────────────────────
 
