@@ -26,6 +26,21 @@ _MX_ING_COLORS = [          # BGR colors for each ingredient icon
 _MX_ING_X    = 1080          # ingredient spawn x
 _MX_ING_Y    = 300           # ingredient spawn y
 
+# ── Cook Pancake constants ────────────────────────────────────────────────────
+_PC_PAN_CX      = 640
+_PC_PAN_CY      = 390
+_PC_PAN_R       = 235
+_PC_PAN_AREA_R  = 188
+_PC_PAN_HX      = 640          # handle bottom center
+_PC_PAN_HY      = 390 + 235 + 60
+_PC_GAUGE_SPEED = 0.0032       # fill per frame
+_PC_GREEN_MIN   = 0.58         # green zone start
+_PC_GREEN_MAX   = 0.88         # green zone end (burn if exceeded)
+_PC_FLIP_PX     = 65           # upward px to detect flip
+_PC_PLATE_X     = 1000         # plate resting x
+_PC_PLATE_Y     = 440          # plate resting y
+_PC_PLATE_GRAB_R = 80
+
 # ── Egg constants ─────────────────────────────────────────────────────────────
 _E_EGGS      = 2
 _E_CX        = 640          # shell center x (fixed)
@@ -68,6 +83,7 @@ class PancakeScene(BaseMiniGame):
         self._phase = 'egg_separate'
         self._init_egg()
         self._init_mixer()
+        self._init_cook_pancake()
 
     def _init_egg(self):
         self._e_current   = 0
@@ -104,6 +120,8 @@ class PancakeScene(BaseMiniGame):
             self._update_egg(hands)
         elif self._phase == 'mixer':
             self._update_mixer(hands)
+        elif self._phase == 'cook_pancake':
+            self._update_cook_pancake(hands)
         return []
 
     def _update_egg(self, hands):
@@ -201,6 +219,8 @@ class PancakeScene(BaseMiniGame):
         h, w = frame.shape[:2]
         if self._phase == 'mixer':
             return self._draw_mixer(frame)
+        if self._phase == 'cook_pancake':
+            return self._draw_cook_pancake(frame)
 
         # ── Bowl ──────────────────────────────────────────────────────────────
         bcx, bcy = _E_BOWL_CX, _E_BOWL_CY
@@ -404,6 +424,229 @@ class PancakeScene(BaseMiniGame):
         cv2.polylines(frame, [arr], True, (170, 178, 188), 2)
         cv2.circle(frame, (cx, cy + 8), 4, (80, 220, 130), -1)
 
+    # ── Cook Pancake phase ───────────────────────────────────────────────────
+
+    def _init_cook_pancake(self):
+        self._pc_gauge      = [0.0, 0.0]   # side 0 and side 1 fill
+        self._pc_side       = 0            # current cooking side
+        self._pc_subphase   = 'cook'       # 'cook' | 'flip_anim' | 'serve'
+        self._pc_flip_anim  = 0            # 0=none, 1-40=in air
+        self._pc_pan_grabbed = False
+        self._pc_flip_prev_y = None
+        self._pc_plate_grabbed = False
+        self._pc_plate_pos   = [float(_PC_PLATE_X), float(_PC_PLATE_Y)]
+        self._pc_pancake_x   = float(_PC_PAN_CX)
+        self._pc_pancake_y   = float(_PC_PAN_CY)
+
+    def _update_cook_pancake(self, hands):
+        sp = self._pc_subphase
+
+        # ── Flip animation ────────────────────────────────────────────────────
+        if sp == 'flip_anim':
+            self._pc_flip_anim -= 1
+            if self._pc_flip_anim == 20:
+                self._pc_side = 1         # switched to side 1
+            if self._pc_flip_anim <= 0:
+                self._pc_subphase = 'cook'
+                self._pc_pan_grabbed = False
+                self._pc_flip_prev_y = None
+            return
+
+        # ── Fill gauge for current side ───────────────────────────────────────
+        if sp == 'cook':
+            s = self._pc_side
+            if self._pc_gauge[s] < _PC_GREEN_MAX:
+                self._pc_gauge[s] = min(_PC_GREEN_MAX,
+                                        self._pc_gauge[s] + _PC_GAUGE_SPEED)
+
+            # After gauge[0] reaches green: prompt to flip
+            if s == 0 and self._pc_gauge[0] >= _PC_GREEN_MIN:
+                self._handle_flip(hands)
+
+            # After gauge[1] reaches green: go to serve
+            if s == 1 and self._pc_gauge[1] >= _PC_GREEN_MIN:
+                self._pc_subphase = 'serve'
+
+        # ── Serve phase ───────────────────────────────────────────────────────
+        elif sp == 'serve':
+            for hand in hands:
+                if not hand.detected:
+                    continue
+                hx, hy = float(hand.screen_x), float(hand.screen_y)
+                if not self._pc_plate_grabbed:
+                    if hand.gripped:
+                        dx = hx - self._pc_plate_pos[0]
+                        dy = hy - self._pc_plate_pos[1]
+                        if dx*dx + dy*dy < _PC_PLATE_GRAB_R**2:
+                            self._pc_plate_grabbed = True
+                    continue
+                self._pc_plate_pos[0] = hx
+                self._pc_plate_pos[1] = hy
+                if not hand.gripped:
+                    self._pc_plate_grabbed = False
+                # Pancake reached pan area?
+                dx = self._pc_plate_pos[0] - _PC_PAN_CX
+                dy = self._pc_plate_pos[1] - _PC_PAN_CY
+                if dx*dx + dy*dy < (_PC_PAN_R * 0.85)**2:
+                    self._phase = 'complete'
+                break
+
+    def _handle_flip(self, hands):
+        for hand in hands:
+            if not hand.detected or not hand.gripped:
+                if self._pc_pan_grabbed:
+                    self._pc_pan_grabbed = False
+                    self._pc_flip_prev_y = None
+                continue
+            hx, hy = float(hand.screen_x), float(hand.screen_y)
+            if not self._pc_pan_grabbed:
+                dx = hx - _PC_PAN_HX
+                dy = hy - _PC_PAN_HY
+                if dx*dx + dy*dy < 90**2:
+                    self._pc_pan_grabbed = True
+                continue
+            sy = hand.screen_y
+            if self._pc_flip_prev_y is not None:
+                if self._pc_flip_prev_y - sy >= _PC_FLIP_PX:
+                    self._pc_subphase  = 'flip_anim'
+                    self._pc_flip_anim = 40
+                    return
+            self._pc_flip_prev_y = sy
+            break
+
+    def _draw_cook_pancake(self, frame):
+        t  = time.time()
+        h, w = frame.shape[:2]
+        cx, cy = _PC_PAN_CX, _PC_PAN_CY
+        sp = self._pc_subphase
+
+        # ── Stove + flames ────────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx, cy + _PC_PAN_R + 18), (_PC_PAN_R+42, 35),
+                    0, 0, 360, (45, 41, 37), -1)
+        fl_span = int(_PC_PAN_R * 1.5)
+        for fi in range(8):
+            fx  = cx - fl_span//2 + fi * (fl_span//7)
+            flk = int(12 * math.sin(t * 9.5 + fi * 1.3))
+            fy0 = cy + _PC_PAN_R + 5
+            cv2.ellipse(frame, (fx, fy0), (6, 14+flk//2), 0, 0, 360, (180,88,14), -1)
+            pts_f = np.array([[fx-10,fy0],[fx,fy0-40-flk],[fx+10,fy0]], np.int32)
+            cv2.fillPoly(frame, [pts_f], (0, int(138+flk*3), 242))
+
+        # ── Pan ───────────────────────────────────────────────────────────────
+        cv2.circle(frame, (cx, cy), _PC_PAN_R, (34, 30, 26), -1)
+        cv2.circle(frame, (cx, cy), _PC_PAN_R, (16, 13, 10), 10)
+        sv = int(145 - self._pc_gauge[self._pc_side] * 25)
+        cv2.circle(frame, (cx, cy), _PC_PAN_AREA_R+8, (sv, sv+2, sv+4), -1)
+
+        # Pan handle (bottom)
+        hy1 = cy + _PC_PAN_R - 10
+        hy2 = cy + _PC_PAN_R + 115
+        cv2.rectangle(frame, (cx-22, hy1), (cx+22, hy2), (30, 26, 22), -1)
+        cv2.rectangle(frame, (cx-22, hy1), (cx+22, hy2), (14, 11, 9), 3)
+
+        # ── Pancake ───────────────────────────────────────────────────────────
+        flip_frac = self._pc_flip_anim / 40.0
+        p_cy      = cy
+        p_scale_x = 1.0
+        if self._pc_flip_anim > 0:
+            p_cy     = int(cy - 80 * math.sin(math.pi * (1 - flip_frac)))
+            p_scale_x = abs(math.cos(math.pi * (1 - flip_frac)))
+
+        pr = int(_PC_PAN_AREA_R * 0.78)
+        pry = int(pr * 0.32)   # flat perspective
+
+        # Cook color: raw cream → golden brown based on gauge
+        g0, g1 = self._pc_gauge[0], self._pc_gauge[1]
+        if self._pc_side == 0 or self._pc_flip_anim > 0:
+            cook_frac = g0 / _PC_GREEN_MAX
+        else:
+            cook_frac = g1 / _PC_GREEN_MAX
+        top_r = int(188 + cook_frac * 30)
+        top_g = int(160 + cook_frac * 10)
+        top_b = int(42  - cook_frac * 10)
+        top_col = (top_b, top_g, top_r)  # BGR
+
+        prx_anim = max(5, int(pr * p_scale_x))
+        cv2.ellipse(frame, (cx+3, p_cy+4), (prx_anim+3, pry+3), 0, 0, 360, (18,15,12), -1)
+        cv2.ellipse(frame, (cx, p_cy), (prx_anim, pry), 0, 0, 360, top_col, -1)
+        # Bubbles/texture on top
+        if p_scale_x > 0.3:
+            rng2 = np.random.default_rng(seed=7)
+            for _ in range(8):
+                bx = cx + int(rng2.integers(-pr//2, pr//2))
+                by = p_cy + int(rng2.integers(-pry//2, pry//2))
+                cv2.circle(frame, (bx, by), int(rng2.integers(3,8)),
+                           tuple(max(0,c-25) for c in top_col), -1)
+        cv2.ellipse(frame, (cx, p_cy), (prx_anim, pry), 0, 0, 360,
+                    tuple(max(0,c-35) for c in top_col), 3)
+
+        # ── Grab ring on handle (when side0 in green zone) ────────────────────
+        if (sp == 'cook' and self._pc_side == 0
+                and self._pc_gauge[0] >= _PC_GREEN_MIN
+                and not self._pc_pan_grabbed
+                and self._pc_flip_anim == 0):
+            rr = int(55 + 8*abs(math.sin(t*5)))
+            cv2.circle(frame, (_PC_PAN_HX, _PC_PAN_HY), rr, (0,200,255), 2, cv2.LINE_AA)
+            _shadow_text(frame, 'GRAB & FLIP UP!', _PC_PAN_HX,
+                         _PC_PAN_HY + rr + 18, 0.60, (0,200,255), 1, center=True)
+
+        # ── Plate (serve phase) ───────────────────────────────────────────────
+        if sp == 'serve':
+            px = int(self._pc_plate_pos[0])
+            py = int(self._pc_plate_pos[1])
+            cv2.ellipse(frame, (px+4, py+8), (88, 28), 0, 0, 360, (18,15,12), -1)
+            cv2.ellipse(frame, (px, py), (96, 32), 0, 0, 360, (48, 38, 148), -1)
+            cv2.ellipse(frame, (px, py), (88, 28), 0, 0, 360, (238, 242, 248), -1)
+            cv2.ellipse(frame, (px, py), (88, 28), 0, 0, 360, (175, 180, 190), 3)
+            if not self._pc_plate_grabbed:
+                rr = int(55 + 8*abs(math.sin(t*5)))
+                cv2.circle(frame, (px, py), rr, (80,220,140), 2, cv2.LINE_AA)
+                _shadow_text(frame, 'GRAB PLATE!', px, py - rr - 12,
+                             0.62, (80,220,140), 1, center=True)
+            cv2.arrowedLine(frame, (px - 80, py), (px - 200, py),
+                            (80,220,140), 3, tipLength=0.3)
+
+        # ── Gauges ────────────────────────────────────────────────────────────
+        self._draw_gauge_bar(frame, w//2 - 280, 55, self._pc_gauge[0], 'Side 1')
+        self._draw_gauge_bar(frame, w//2 - 280, 110, self._pc_gauge[1], 'Side 2')
+
+        # ── Instruction ───────────────────────────────────────────────────────
+        msgs = {'cook': ('Cook until green!  Then FLIP' if self._pc_side == 0
+                         else 'Cook side 2 until green!'),
+                'flip_anim': 'Flipping!',
+                'serve': 'Grab the plate and bring it to the pan!'}
+        _shadow_text(frame, msgs.get(sp,''), w//2, h-32,
+                     0.62, (200,210,230), 1, center=True)
+        return frame
+
+    def _draw_gauge_bar(self, frame, bx, by, value, label):
+        """Horizontal gauge bar with red/yellow/green zones."""
+        bw, bh = 560, 38
+        # Background
+        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (30, 28, 24), -1)
+        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (70, 68, 62), 2)
+
+        # Zone colors (BGR)
+        zones = [
+            (0.0,   _PC_GREEN_MIN, (40,  55,  200)),  # red = underdone
+            (_PC_GREEN_MIN, _PC_GREEN_MAX, (50, 210, 80)),  # green = perfect
+            (_PC_GREEN_MAX, 1.0, (30,  30,  160)),    # dark = burnt
+        ]
+        for z_start, z_end, col in zones:
+            x1 = bx + int(z_start * bw) + 2
+            x2 = bx + int(z_end   * bw) - 1
+            if x2 > x1:
+                cv2.rectangle(frame, (x1, by+3), (x2, by+bh-3), col, -1)
+
+        # Fill indicator (moving bar)
+        fill_x = bx + int(value * bw)
+        cv2.rectangle(frame, (fill_x-4, by-4), (fill_x+4, by+bh+4), (255,255,255), -1)
+        cv2.rectangle(frame, (fill_x-4, by-4), (fill_x+4, by+bh+4), (80,80,100), 2)
+
+        # Label
+        _shadow_text(frame, label, bx - 10, by + bh - 6, 0.50,
+                     (200,208,220), 1, center=False)
+
     # ── Mixer phase ───────────────────────────────────────────────────────────
 
     def _init_mixer(self):
@@ -460,7 +703,8 @@ class PancakeScene(BaseMiniGame):
                     if self._mx_light == 'green':
                         self._mx_added += 1
                         if self._mx_added >= len(_MX_INGREDIENTS):
-                            self._phase = 'complete'
+                            self._phase = 'cook_pancake'
+                            self._init_cook_pancake()
                     else:
                         self._mx_fail_flash = 18
                 # Reset ingredient position
