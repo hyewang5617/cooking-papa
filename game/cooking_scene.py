@@ -54,8 +54,8 @@ _BOWL2_CX        = 200    # bowl center x  (LEFT)
 _BOWL2_CY        = 430    # bowl center y
 _PIECES_CX       = 800    # initial pieces center x (RIGHT, on cutting board)
 _PIECES_CY       = 430    # initial pieces center y
-_BOWL_PIECE_COUNT = 12    # number of onion piece objects
-_BOWL_PIECE_GOAL  = 8     # pieces needed in bowl to complete
+_BOWL_PIECE_COUNT = 22    # number of onion piece objects
+_BOWL_PIECE_GOAL  = 14    # pieces needed in bowl to complete
 _KNIFE_PUSH_R     = 80    # px — knife push interaction radius
 _BOWL_COLLECT_X   = 350   # pieces passing this x line are "in the bowl"
 
@@ -159,7 +159,7 @@ class CookingScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'toss_meat'   # NEW entry point
+        self._phase     = 'bowl_drop'   # NEW entry point
         self._held_tool = None
         self._held_by   = -1
 
@@ -281,6 +281,17 @@ class CookingScene(BaseMiniGame):
         self._meat_total_ang      = 0.0
         self.meat_stirs           = 0
         self._meat_strand_count   = 0
+
+        # Auto-initialize phase-specific state when starting mid-game
+        _auto = {
+            'bowl_drop':   self._init_bowl_pieces,
+            'onion_fry':   self._init_onion,
+            'meat_mix':    self._init_meat_mix,
+            'knead':       self._init_knead,
+            'toss_meat':   self._init_toss_meat,
+        }
+        if self._phase in _auto:
+            _auto[self._phase]()
 
     # ── BaseMiniGame interface ────────────────────────────────────────────────
 
@@ -1919,8 +1930,8 @@ class CookingScene(BaseMiniGame):
         self._bd_piece_avel = []
         self._bd_in_bowl    = []
         for i in range(_BOWL_PIECE_COUNT):
-            px = _PIECES_CX + int(rng.integers(-90, 90))
-            py = _PIECES_CY + int(rng.integers(-65, 65))
+            px = _PIECES_CX + int(rng.integers(-140, 140))
+            py = _PIECES_CY + int(rng.integers(-80, 80))
             self._bd_piece_pos.append([float(px), float(py)])
             self._bd_piece_vel.append([0.0, 0.0])
             self._bd_piece_ang.append(float(rng.uniform(0, 6.28)))
@@ -2015,8 +2026,11 @@ class CookingScene(BaseMiniGame):
             self._bd_piece_pos[i][1]  += self._bd_piece_vel[i][1]
             self._bd_piece_ang[i]     += self._bd_piece_avel[i]
 
-            # Board boundary (keep on board, y range)
+            # Board boundary: clamp y and x (right wall = 1220, bounce back)
             self._bd_piece_pos[i][1] = max(355.0, min(self._bd_piece_pos[i][1], 510.0))
+            if self._bd_piece_pos[i][0] > 1210.0:
+                self._bd_piece_pos[i][0] = 1210.0
+                self._bd_piece_vel[i][0] = -abs(self._bd_piece_vel[i][0]) * 0.6
 
             # Bowl collection: crosses the left boundary
             if self._bd_piece_pos[i][0] < _BOWL_COLLECT_X:
@@ -2025,14 +2039,15 @@ class CookingScene(BaseMiniGame):
     # ── Drawing: Onion cut scene ──────────────────────────────────────────────
 
     def _draw_big_onion(self, frame, cx, cy, peel_frac=0.0, slices=0):
-        r = _ONB_R
-        # White flesh base
-        cv2.circle(frame, (cx, cy), r, (220, 235, 242), -1)
-        cv2.circle(frame, (cx, cy), int(r * 0.68), (205, 222, 232), 2)
-        cv2.circle(frame, (cx, cy), int(r * 0.36), (188, 210, 222), 2)
-        cv2.circle(frame, (cx, cy), max(4, int(r * 0.10)), (165, 196, 212), -1)
+        r  = _ONB_R
+        fh, fw = frame.shape[:2]
 
-        # Brown skin (fades out as peel_frac → 1)
+        # ── Step 1: draw complete onion onto a canvas ─────────────────────────
+        canvas = frame.copy()
+        cv2.circle(canvas, (cx, cy), r, (220, 235, 242), -1)
+        cv2.circle(canvas, (cx, cy), int(r * 0.68), (205, 222, 232), 2)
+        cv2.circle(canvas, (cx, cy), int(r * 0.36), (188, 210, 222), 2)
+        cv2.circle(canvas, (cx, cy), max(4, int(r * 0.10)), (165, 196, 212), -1)
         if peel_frac < 1.0:
             alpha_s = 1.0 - peel_frac
             skin_r  = int(r * 0.97)
@@ -2040,26 +2055,64 @@ class CookingScene(BaseMiniGame):
                 a0 = i * 36 - 5
                 a1 = a0 + int(32 * alpha_s)
                 if a1 > a0:
-                    cv2.ellipse(frame, (cx, cy), (skin_r, skin_r),
+                    cv2.ellipse(canvas, (cx, cy), (skin_r, skin_r),
                                 0, a0, a1, (48, 98, 148), int(skin_r * 0.28))
-            cv2.circle(frame, (cx, cy), skin_r, (32, 72, 115), 3)
+            cv2.circle(canvas, (cx, cy), skin_r, (32, 72, 115), 3)
+        cv2.circle(canvas, (cx, cy), r, (28, 68, 108), 4)
 
-        # Slice cut marks (vertical lines)
-        if slices > 0:
-            for i in range(slices):
-                sx = cx - r + int(r * 2.0 * (i + 1) / (slices + 1))
-                cv2.line(frame, (sx, cy - int(r * 0.88)),
-                         (sx, cy + int(r * 0.88)),
-                         (240, 252, 255), 3, cv2.LINE_AA)
+        if slices == 0:
+            # No cuts: blit the onion region straight to frame
+            y1 = max(0, cy - r - 2);  y2 = min(fh, cy + r + 2)
+            x1 = max(0, cx - r - 2);  x2 = min(fw, cx + r + 2)
+            frame[y1:y2, x1:x2] = canvas[y1:y2, x1:x2]
+            shoots_cx = cx
+        else:
+            # ── Step 2: cut canvas into vertical strips and spread them ───────
+            n   = slices + 1
+            sw  = (2 * r) // n                                   # strip width
+            gap = max(4, int(r * 0.18 * slices / _SLICE_NEEDED)) # gap per cut
+            total_spread = gap * (n - 1)
+            y1  = max(0, cy - r - 2);  y2 = min(fh, cy + r + 2)
 
-        # Green shoots at top
-        for ox, ly2 in [(-14, -50), (0, -65), (18, -55)]:
-            cv2.line(frame, (cx, cy - r + 12),
-                     (cx + ox, cy - r + ly2),
-                     (28, 140, 38), 4)
+            for i in range(n):
+                src_x1 = cx - r + i * sw
+                src_x2 = cx - r + (i + 1) * sw
+                shift  = i * gap - total_spread // 2
+                dst_x1 = src_x1 + shift
+                dst_x2 = src_x2 + shift
 
-        # Outline
-        cv2.circle(frame, (cx, cy), r, (28, 68, 108), 4)
+                s1 = max(0, src_x1);  s2 = min(fw, src_x2)
+                d1 = max(0, dst_x1);  d2 = min(fw, dst_x2)
+                col = min(s2 - s1, d2 - d1)
+                if col > 0 and y2 > y1:
+                    frame[y1:y2, d1:d1 + col] = canvas[y1:y2, s1:s1 + col]
+
+            # ── Step 3: fill gaps with white cut-face ─────────────────────────
+            for i in range(n - 1):
+                shift_i  = i * gap - total_spread // 2
+                gx1      = cx - r + (i + 1) * sw + shift_i        # right edge of slice i
+                gx2      = gx1 + gap
+                orig_cut = cx - r + (i + 1) * sw                  # cut x in original
+                dist     = abs(orig_cut - cx)
+                if dist < r:
+                    h_half = int(math.sqrt(r * r - dist * dist))
+                    gx1c   = max(0, gx1);  gx2c = min(fw, gx2)
+                    gy1    = max(0, cy - h_half);  gy2 = min(fh, cy + h_half)
+                    if gx2c > gx1c and gy2 > gy1:
+                        cv2.rectangle(frame, (gx1c, gy1), (gx2c, gy2), (245, 252, 255), -1)
+                        cv2.line(frame, (gx1c, gy1), (gx1c, gy2), (180, 210, 225), 2)
+                        cv2.line(frame, (gx2c-1, gy1), (gx2c-1, gy2), (180, 210, 225), 2)
+
+            # shoots on the middle strip
+            mid_i     = n // 2
+            sw_       = (2 * r) // n
+            shift_mid = mid_i * gap - total_spread // 2
+            shoots_cx = cx - r + mid_i * sw_ + sw_ // 2 + shift_mid
+
+        # ── Green shoots ──────────────────────────────────────────────────────
+        for ox, ly2_off in [(-14, -50), (0, -65), (18, -55)]:
+            cv2.line(frame, (shoots_cx, cy - r + 12),
+                     (shoots_cx + ox, cy - r + ly2_off), (28, 140, 38), 4)
 
     def _draw_onion_cut(self, frame):
         p  = self._phase
@@ -2121,7 +2174,7 @@ class CookingScene(BaseMiniGame):
                 px = int(self._bd_piece_pos[i][0])
                 py = int(self._bd_piece_pos[i][1])
                 ang = float(self._bd_piece_ang[i])
-                w2, h2 = 18, 13
+                w2, h2 = 22, 16
                 ca, sa = math.cos(ang), math.sin(ang)
                 pts = np.array([
                     [px + int(-w2*ca + h2*sa), py + int(-w2*sa - h2*ca)],
@@ -2129,9 +2182,11 @@ class CookingScene(BaseMiniGame):
                     [px + int( w2*ca - h2*sa), py + int( w2*sa + h2*ca)],
                     [px + int(-w2*ca - h2*sa), py + int(-w2*sa + h2*ca)],
                 ], dtype=np.int32)
-                cv2.fillPoly(frame, [pts + 2], (22, 20, 18))
-                cv2.fillPoly(frame, [pts], (215, 235, 245))
-                cv2.polylines(frame, [pts], True, (155, 175, 185), 1)
+                # Onion slice color: cream/light yellow flesh with brown outline
+                cv2.fillPoly(frame, [pts + np.array([3, 3])], (30, 55, 80))   # shadow
+                cv2.fillPoly(frame, [pts], (185, 215, 240))                    # flesh (cream)
+                cv2.fillPoly(frame, [pts - np.array([3, 3])], (165, 198, 225)) # inner shading
+                cv2.polylines(frame, [pts], True, (45, 88, 130), 2)            # brown outline
 
             # Progress label
             n_in = sum(self._bd_in_bowl)
