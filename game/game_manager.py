@@ -431,8 +431,7 @@ class GameManager:
         h, w = frame.shape[:2]
         t    = time.time()
 
-        # Dark overlay
-        frame[:] = (22, 20, 18)
+        dim(frame, 0.55)
 
         # Title
         draw_text_centered(frame, 'Select  Stage', 60, scale=1.1,
@@ -440,8 +439,8 @@ class GameManager:
 
         # Card definitions: (label, subtitle, locked)
         stages = [
-            ('Pancakes',       'Play Now!',  False),
             ('Salisbury Steak', 'Play Now!', False),
+            ('Pancakes',        'Play Now!', False),
         ]
         card_w, card_h = 480, 420
         gap            = 60
@@ -485,10 +484,10 @@ class GameManager:
 
             # Stage icon
             icon_cy = card_y + card_h // 2 - 40
-            if bi == 0:   # Pancake icon
-                _draw_pancake_icon(frame, cx_c, icon_cy)
-            else:         # Steak icon
+            if bi == 0:   # Steak icon
                 _draw_steak_icon(frame, cx_c, icon_cy)
+            else:         # Pancake icon
+                _draw_pancake_icon(frame, cx_c, icon_cy)
 
             # Label below icon (both cards)
             if locked:
@@ -512,11 +511,11 @@ class GameManager:
                                   (bx + 20 + bar_w, card_y + card_h - 16),
                                   COLOR_PRIMARY, -1)
 
-        if activated == 0:   # Pancake selected
-            self._selected_scene = PancakeScene
-            self._begin_countdown()
-        elif activated == 1:   # Steak selected
+        if activated == 0:   # Steak selected
             self._selected_scene = CookingScene
+            self._begin_countdown()
+        elif activated == 1:   # Pancake selected
+            self._selected_scene = PancakeScene
             self._begin_countdown()
 
         draw_text_centered(frame, 'Grip  over  a  card  to  select  |  ESC: back',
