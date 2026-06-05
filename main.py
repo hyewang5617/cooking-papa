@@ -45,7 +45,7 @@ def main():
         cv2.imshow(WIN, output)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == 27 or key == ord('q'):  # ESC or Q
+        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
             break
         if key != 0xFF:
             game.handle_key(key)
