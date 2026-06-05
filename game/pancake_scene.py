@@ -921,7 +921,7 @@ class PancakeScene(BaseMiniGame):
             n_rows  = 7
             r_inner = _SY_PR * 0.82
             y_start = -int(r_inner)
-            angle   = math.pi / 4   # 45° CCW → left end points upward
+            angle   = -math.pi / 4  # 45° CW → right end points upward
             pts = []
             for i in range(n_rows + 1):
                 ly     = y_start + i * int(r_inner * 2 / n_rows)
