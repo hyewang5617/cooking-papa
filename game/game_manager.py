@@ -352,6 +352,9 @@ class GameManager:
         # ── Broccoli (right of badge) ─────────────────────────────────────────
         _draw_broccoli(frame, bx + badge_w + 85, by + badge_h // 2, size=75)
 
+        # ── Cooking Papa (right side of screen) ───────────────────────────────
+        _draw_cooking_papa(frame, w - 155, h // 2 + 55, size=95)
+
         # ── Three buttons side by side ────────────────────────────────────────
         btn_labels = ['START', 'TUTORIAL', 'EXIT']
         btn_colors = [(36, 170, 56), (36, 130, 210), (55, 55, 175)]
@@ -431,22 +434,27 @@ class GameManager:
         h, w = frame.shape[:2]
         t    = time.time()
 
-        dim(frame, 0.55)
+        dim(frame, 0.42)
 
         # Title
-        draw_text_centered(frame, 'Select  Stage', 60, scale=1.1,
+        draw_text_centered(frame, 'Select  Stage', 52, scale=1.0,
                            color=COLOR_PRIMARY, thickness=2)
 
-        # Card definitions: (label, subtitle, locked)
+        # ── Cooking Papa (left side) ──────────────────────────────────────────
+        _draw_cooking_papa(frame, w // 4, h // 2, size=155)
+
+        # ── Stage cards stacked on the right ─────────────────────────────────
+        card_w  = 590
+        card_h  = 265
+        gap     = 30
+        bx      = w // 2 + 30         # left edge of cards
+        total_h = 2 * card_h + gap
+        top_y   = (h - total_h) // 2  # y of first card
+
         stages = [
             ('Salisbury Steak', 'Play Now!', False),
             ('Pancakes',        'Play Now!', False),
         ]
-        card_w, card_h = 480, 420
-        gap            = 60
-        total_w        = 2 * card_w + gap
-        x0             = (w - total_w) // 2
-        card_y         = h // 2 - card_h // 2
 
         hand_sx, hand_sy, hand_gripped = -1, -1, False
         if self.hand_states:
@@ -456,11 +464,11 @@ class GameManager:
 
         activated = -1
         for bi, (label, sub, locked) in enumerate(stages):
-            cx_c = x0 + bi * (card_w + gap) + card_w // 2
-            cy_c = h // 2
+            card_y = top_y + bi * (card_h + gap)
+            cy_c   = card_y + card_h // 2
 
             over = (not locked and
-                    x0 + bi*(card_w+gap) <= hand_sx <= x0 + bi*(card_w+gap) + card_w and
+                    bx <= hand_sx <= bx + card_w and
                     card_y <= hand_sy <= card_y + card_h and hand_gripped)
 
             if over:
@@ -473,48 +481,47 @@ class GameManager:
                 activated = bi
 
             # Card background
-            pulse = int(8 * abs(_math.sin(t * 4))) if over else 0
-            base_col = (45, 42, 38) if not locked else (30, 28, 26)
-            border_col = COLOR_PRIMARY if over else ((100, 100, 110) if locked else (80, 85, 95))
-            bx = x0 + bi * (card_w + gap)
-            cv2.rectangle(frame, (bx - pulse, card_y - pulse),
-                          (bx + card_w + pulse, card_y + card_h + pulse), base_col, -1)
-            cv2.rectangle(frame, (bx - pulse, card_y - pulse),
-                          (bx + card_w + pulse, card_y + card_h + pulse), border_col, 3)
+            pulse      = int(8 * abs(_math.sin(t * 4))) if over else 0
+            base_col   = (45, 42, 38)
+            border_col = COLOR_PRIMARY if over else (80, 85, 95)
+            cv2.rectangle(frame,
+                          (bx - pulse,          card_y - pulse),
+                          (bx + card_w + pulse,  card_y + card_h + pulse),
+                          base_col, -1)
+            cv2.rectangle(frame,
+                          (bx - pulse,          card_y - pulse),
+                          (bx + card_w + pulse,  card_y + card_h + pulse),
+                          border_col, 3)
 
-            # Stage icon
-            icon_cy = card_y + card_h // 2 - 40
-            if bi == 0:   # Steak icon
-                _draw_steak_icon(frame, cx_c, icon_cy)
-            else:         # Pancake icon
-                _draw_pancake_icon(frame, cx_c, icon_cy)
+            # Icon on left portion of card
+            icon_cx = bx + 115
+            if bi == 0:
+                _draw_steak_icon(frame, icon_cx, cy_c - 10, size=80)
+            else:
+                _draw_pancake_icon(frame, icon_cx, cy_c - 5, size=72)
 
-            # Label below icon (both cards)
-            if locked:
-                (tw, th), _ = cv2.getTextSize(label, FONT, 0.90, 2)
-                cv2.putText(frame, label, (cx_c - tw//2, card_y + card_h - 88),
-                            FONT, 0.90, (140, 140, 160), 2, cv2.LINE_AA)
-            if not locked:
-                # Label centered within the card
-                for txt, scale, col, y_off in [
-                    (label, 0.90, COLOR_WHITE,   card_y + card_h - 88),
-                    (sub,   0.60, COLOR_SUCCESS,  card_y + card_h - 52),
-                ]:
-                    (tw, th), _ = cv2.getTextSize(txt, FONT, scale, 2)
-                    cv2.putText(frame, txt, (cx_c - tw//2, y_off),
-                                FONT, scale, col, 2, cv2.LINE_AA)
-                # Hold bar
-                if hold_frac > 0:
-                    bar_w = int((card_w - 40) * hold_frac)
-                    cv2.rectangle(frame,
-                                  (bx + 20, card_y + card_h - 28),
-                                  (bx + 20 + bar_w, card_y + card_h - 16),
-                                  COLOR_PRIMARY, -1)
+            # Text on right portion of card
+            txt_cx = bx + card_w // 2 + 80
+            for txt, scale, col, y_off in [
+                (label, 0.88, COLOR_WHITE,   cy_c - 16),
+                (sub,   0.62, COLOR_SUCCESS,  cy_c + 20),
+            ]:
+                (tw, _th), _ = cv2.getTextSize(txt, FONT, scale, 2)
+                cv2.putText(frame, txt, (txt_cx - tw // 2, y_off),
+                            FONT, scale, col, 2, cv2.LINE_AA)
 
-        if activated == 0:   # Steak selected
+            # Hold bar at bottom of card
+            if hold_frac > 0:
+                bar_w = int((card_w - 40) * hold_frac)
+                cv2.rectangle(frame,
+                              (bx + 20,          card_y + card_h - 20),
+                              (bx + 20 + bar_w,   card_y + card_h - 10),
+                              COLOR_PRIMARY, -1)
+
+        if activated == 0:
             self._selected_scene = CookingScene
             self._begin_countdown()
-        elif activated == 1:   # Pancake selected
+        elif activated == 1:
             self._selected_scene = PancakeScene
             self._begin_countdown()
 
@@ -936,6 +943,217 @@ def _draw_steak_icon(frame, cx, cy, size=90):
         cv2.line(frame, (gx-int(s*0.18), cy+int(s*0.3)),
                  (gx+int(s*0.18), cy-int(s*0.3)), (35, 55, 110), 4)
     cv2.polylines(frame, [pts], True, (40, 60, 120), 3)
+
+
+def _draw_cooking_papa(frame, cx, cy, size=90):
+    """Chibi Cooking Papa (male) drawn with OpenCV primitives."""
+    import math as _m
+    s = size
+    i = lambda x: int(x)
+
+    # ── Palette (BGR) ─────────────────────────────────────────────────────────
+    SKIN   = (175, 198, 220)
+    SKIN_D = (145, 168, 192)
+    HAIR   = (52,  70,  105)
+    HAT    = (245, 248, 252)
+    HAT_D  = (205, 210, 218)
+    APRON  = (28,  145, 225)
+    APRON_D= (18,  112, 182)
+    SHIRT  = (170, 130,  80)
+    PANTS  = (100,  62,  28)
+    SHOE   = (35,   28,  20)
+    SP_H   = (162,  85,  30)
+    SP_M   = (190, 196, 204)
+    LINE   = (14,   12,   8)
+    MOUTH  = (35,   48,  210)
+    WHITE  = (252, 252, 254)
+    STACHE = (45,   62,  100)   # mustache (dark brown)
+
+    hcy = cy - i(s * 0.82)
+    hcx = cx
+    hr  = i(s * 0.55)           # head radius — slightly wider for dad
+
+    # ── Spatula ───────────────────────────────────────────────────────────────
+    ang = 0.70
+    gx, gy = i(cx + s*0.40), i(cy - s*0.10)
+    hx1 = i(gx + _m.cos(ang) * s*0.92)
+    hy1 = i(gy - _m.sin(ang) * s*0.92)
+    cv2.line(frame, (gx, gy), (hx1, hy1), LINE,  i(s*0.14)+2)
+    cv2.line(frame, (gx, gy), (hx1, hy1), SP_H,  i(s*0.10))
+    nx2, ny2 = -_m.sin(ang), -_m.cos(ang)
+    fw = i(s * 0.23)
+    tip_x = i(hx1 + _m.cos(ang)*s*0.32)
+    tip_y = i(hy1 - _m.sin(ang)*s*0.32)
+    sp_pts = np.array([
+        [i(hx1 + nx2*fw),   i(hy1 + ny2*fw)],
+        [i(hx1 - nx2*fw),   i(hy1 - ny2*fw)],
+        [i(tip_x - nx2*fw), i(tip_y - ny2*fw)],
+        [i(tip_x + nx2*fw), i(tip_y + ny2*fw)],
+    ], np.int32)
+    cv2.fillPoly(frame, [sp_pts + np.array([2, 2])], LINE)
+    cv2.fillPoly(frame, [sp_pts], SP_M)
+    for k in range(3):
+        hpx = i(hx1 + _m.cos(ang) * (s*0.04 + k*s*0.09))
+        hpy = i(hy1 - _m.sin(ang) * (s*0.04 + k*s*0.09))
+        cv2.circle(frame, (hpx, hpy), i(s*0.038), LINE, -1)
+
+    # ── Short side hair (male, not a bob) ─────────────────────────────────────
+    # Just small tufts at the sides — no long back hair
+    for side, sx_mul in [(-1, -1), (1, 1)]:
+        tuft_pts = np.array([
+            [hcx + sx_mul*(hr - i(s*0.06)), hcy - i(s*0.08)],
+            [hcx + sx_mul*(hr + i(s*0.04)), hcy + i(s*0.18)],
+            [hcx + sx_mul*(hr - i(s*0.02)), hcy + i(s*0.30)],
+            [hcx + sx_mul*(hr - i(s*0.20)), hcy + i(s*0.20)],
+        ], np.int32)
+        cv2.fillPoly(frame, [tuft_pts + np.array([2, 2])], LINE)
+        cv2.fillPoly(frame, [tuft_pts], HAIR)
+
+    # ── Left arm ──────────────────────────────────────────────────────────────
+    la1 = (i(cx - s*0.26), i(cy + s*0.05))
+    la2 = (i(cx - s*0.40), i(cy + s*0.48))
+    cv2.line(frame, la1, la2, LINE,  i(s*0.26)+2)
+    cv2.line(frame, la1, la2, SHIRT, i(s*0.21))
+    cv2.circle(frame, (la2[0]+2, la2[1]+2), i(s*0.14), LINE,  -1)
+    cv2.circle(frame, la2,                  i(s*0.14), SKIN,  -1)
+
+    # ── Torso — broader shoulders for dad ────────────────────────────────────
+    bw = i(s * 0.78)
+    bh_body = i(s * 0.52)
+    sh_pts = np.array([
+        [cx - bw//2,             cy],
+        [cx + bw//2,             cy],
+        [cx + bw//2 + i(s*0.06), cy + bh_body],
+        [cx - bw//2 - i(s*0.06), cy + bh_body],
+    ], np.int32)
+    cv2.fillPoly(frame, [sh_pts + np.array([3, 4])], LINE)
+    cv2.fillPoly(frame, [sh_pts], SHIRT)
+
+    ap_pts = np.array([
+        [cx - i(s*0.22), cy - i(s*0.02)],
+        [cx + i(s*0.22), cy - i(s*0.02)],
+        [cx + i(s*0.50), cy + bh_body],
+        [cx - i(s*0.50), cy + bh_body],
+    ], np.int32)
+    cv2.fillPoly(frame, [ap_pts + np.array([2, 3])], LINE)
+    cv2.fillPoly(frame, [ap_pts], APRON)
+    px2, py2 = cx - i(s*0.13), cy + i(s*0.20)
+    cv2.rectangle(frame, (px2, py2), (px2+i(s*0.26), py2+i(s*0.19)), APRON_D, -1)
+    cv2.rectangle(frame, (px2, py2), (px2+i(s*0.26), py2+i(s*0.19)), LINE, 2)
+    for sx_off in [-i(s*0.22), i(s*0.22)]:
+        cv2.line(frame, (cx+sx_off, cy-i(s*0.02)),
+                 (hcx+sx_off, hcy+i(s*0.34)), APRON, i(s*0.07))
+    cv2.polylines(frame, [ap_pts], True, LINE, 2)
+    cv2.polylines(frame, [sh_pts], True, LINE, 2)
+
+    # ── Legs ──────────────────────────────────────────────────────────────────
+    leg_y0 = cy + bh_body
+    for sign, lx in [(-1, cx - i(s*0.25)), (1, cx + i(s*0.25))]:
+        cv2.rectangle(frame, (lx-i(s*0.14), leg_y0),
+                      (lx+i(s*0.14), leg_y0+i(s*0.28)), LINE, -1)
+        cv2.rectangle(frame, (lx-i(s*0.11), leg_y0),
+                      (lx+i(s*0.11), leg_y0+i(s*0.28)), PANTS, -1)
+        shoe_pts = np.array([
+            [lx - i(s*0.14), leg_y0 + i(s*0.26)],
+            [lx + i(s*0.14), leg_y0 + i(s*0.26)],
+            [lx + i(s*0.22*max(sign, 0)), leg_y0 + i(s*0.42)],
+            [lx - i(s*0.14), leg_y0 + i(s*0.42)],
+        ], np.int32)
+        cv2.fillPoly(frame, [shoe_pts + np.array([2, 2])], LINE)
+        cv2.fillPoly(frame, [shoe_pts], SHOE)
+
+    # ── Right arm (raised, holding spatula) ───────────────────────────────────
+    ra1 = (i(cx + s*0.26), i(cy + s*0.05))
+    ra2 = (i(cx + s*0.44), i(cy - s*0.22))
+    cv2.line(frame, ra1, ra2, LINE,  i(s*0.26)+2)
+    cv2.line(frame, ra1, ra2, SHIRT, i(s*0.21))
+    cv2.circle(frame, (ra2[0]+2, ra2[1]+2), i(s*0.15), LINE, -1)
+    cv2.circle(frame, ra2,                  i(s*0.15), SKIN, -1)
+
+    # ── Head (slightly wider/squarer than Mama's) ─────────────────────────────
+    cv2.ellipse(frame, (hcx+3, hcy+4), (hr+4, hr+2), 0, 0, 360, LINE, -1)
+    cv2.ellipse(frame, (hcx,   hcy),   (hr+2, hr),   0, 0, 360, SKIN, -1)
+
+    # ── Chef hat ──────────────────────────────────────────────────────────────
+    brim_y = hcy - hr + i(s*0.12)
+    brim_w = i(hr * 1.32)
+    top_w  = i(hr * 1.08)
+    hat_h  = i(s * 0.60)
+    hat_pts = np.array([
+        [hcx - top_w,  brim_y - hat_h],
+        [hcx + top_w,  brim_y - hat_h],
+        [hcx + brim_w, brim_y],
+        [hcx - brim_w, brim_y],
+    ], np.int32)
+    cv2.fillPoly(frame, [hat_pts + np.array([3, 4])], LINE)
+    cv2.fillPoly(frame, [hat_pts], HAT)
+    cv2.rectangle(frame, (hcx-brim_w, brim_y-i(s*0.14)),
+                  (hcx+brim_w, brim_y), HAT_D, -1)
+    for sign2 in [-1, 1]:
+        x2 = hcx + sign2 * i(top_w*0.5)
+        cv2.line(frame, (x2, brim_y - hat_h + i(s*0.06)),
+                 (x2 + sign2*i(s*0.02), brim_y - i(s*0.16)), HAT_D, 2)
+    cv2.polylines(frame, [hat_pts], True, LINE, 3)
+
+    # ── Short front hair tufts under hat ─────────────────────────────────────
+    for fhx, fhr2 in [(hcx - i(s*0.28), 13), (hcx + i(s*0.10), 12)]:
+        cv2.ellipse(frame, (fhx, brim_y + i(s*0.06)),
+                    (fhr2, i(s*0.08)), 0, 0, 360, LINE, -1)
+        cv2.ellipse(frame, (fhx, brim_y + i(s*0.06)),
+                    (fhr2-1, i(s*0.07)), 0, 0, 360, HAIR, -1)
+
+    # ── Eyes — both open, thick brows (manly) ────────────────────────────────
+    ey  = hcy - i(s*0.06)
+    er  = i(s*0.092)
+    for ex_off in [-i(s*0.21), i(s*0.21)]:
+        ex = hcx + ex_off
+        cv2.circle(frame, (ex+1, ey+1), er+2, LINE,  -1)
+        cv2.circle(frame, (ex,   ey),   er,   WHITE, -1)
+        cv2.circle(frame, (ex + i(s*0.02), ey + i(s*0.01)), i(er*0.60), LINE, -1)
+        cv2.circle(frame, (ex + i(s*0.01), ey - i(s*0.02)), i(er*0.20), WHITE, -1)
+        # Thick straight eyebrow (masculine)
+        brow_tilt = -i(s*0.01) if ex_off < 0 else i(s*0.01)
+        cv2.line(frame,
+                 (ex - i(s*0.13), ey - i(s*0.16) + brow_tilt),
+                 (ex + i(s*0.13), ey - i(s*0.13) - brow_tilt),
+                 HAIR, i(s*0.055))
+
+    # ── Nose (broader) ────────────────────────────────────────────────────────
+    cv2.ellipse(frame, (hcx, hcy + i(s*0.10)),
+                (i(s*0.055), i(s*0.040)), 0, 0, 360, SKIN_D, -1)
+
+    # ── Mustache (key masculine feature!) ─────────────────────────────────────
+    mcy = hcy + i(s*0.18)
+    for side3, mx_off in [(-1, -i(s*0.08)), (1, i(s*0.08))]:
+        mpts = np.array([
+            [hcx + mx_off,              mcy - i(s*0.02)],
+            [hcx + side3*i(s*0.28),     mcy - i(s*0.04)],
+            [hcx + side3*i(s*0.30),     mcy + i(s*0.05)],
+            [hcx + side3*i(s*0.22),     mcy + i(s*0.09)],
+            [hcx + mx_off,              mcy + i(s*0.04)],
+        ], np.int32)
+        cv2.fillPoly(frame, [mpts + np.array([1, 1])], LINE)
+        cv2.fillPoly(frame, [mpts], STACHE)
+
+    # ── Mouth (big grin below mustache) ───────────────────────────────────────
+    my2 = mcy + i(s*0.10)
+    smile_pts = []
+    for a in range(205, 336, 7):
+        r2 = _m.radians(a)
+        smile_pts.append([i(hcx + _m.cos(r2)*s*0.17), i(my2 + _m.sin(r2)*s*0.05)])
+    s_arr = np.array(smile_pts, np.int32)
+    cv2.polylines(frame, [s_arr], False, LINE,  i(s*0.05)+1)
+    cv2.polylines(frame, [s_arr], False, MOUTH, i(s*0.040))
+    t_pts2 = np.array([
+        [hcx - i(s*0.12), my2],
+        [hcx + i(s*0.12), my2],
+        [hcx + i(s*0.10), my2 + i(s*0.07)],
+        [hcx - i(s*0.10), my2 + i(s*0.07)],
+    ], np.int32)
+    cv2.fillPoly(frame, [t_pts2], WHITE)
+
+    # ── Head outline ──────────────────────────────────────────────────────────
+    cv2.ellipse(frame, (hcx, hcy), (hr+2, hr), 0, 0, 360, LINE, 3)
 
 
 def _draw_pancake_icon(frame, cx, cy, size=80):

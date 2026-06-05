@@ -181,7 +181,7 @@ class CookingScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'cook_pancake'   # NEW entry point
+        self._phase     = 'place_onion'   # NEW entry point
         self._held_tool = None
         self._held_by   = -1
 
