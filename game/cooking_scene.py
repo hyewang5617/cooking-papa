@@ -108,8 +108,8 @@ _KN_DIRS      = ('up', 'down', 'left', 'right')
 # ── Cook Steak ───────────────────────────────────────────────────────────────
 _SK_PAN_CX      = 640
 _SK_PAN_CY      = 370
-_SK_PAN_R       = 255
-_SK_AREA_R      = 205
+_SK_PAN_R       = 200
+_SK_AREA_R      = 160
 _SK_PAN_HX      = _SK_PAN_CX                     # handle grab x (bottom)
 _SK_PAN_HY      = _SK_PAN_CY + _SK_PAN_R + 65   # handle grab y (bottom)
 _SK_FLAME_CX    = 105
@@ -130,7 +130,7 @@ _TOSS_BALL_R   = 72     # ball base radius
 _TOSS_ZONE_R   = 140    # catch zone radius
 _TOSS_SPEED    = 10     # pixels per frame
 _TOSS_SWIPE_PX = 22     # screen px/frame to count as swipe
-_TOSS_TARGET   = 15     # catches needed
+_TOSS_TARGET   = 10     # catches needed
 
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
