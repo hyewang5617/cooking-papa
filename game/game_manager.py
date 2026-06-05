@@ -202,6 +202,7 @@ class GameManager:
         # Stage select grab state
         self._stage_btn_hold   = [0, 0]
         self._selected_scene   = CookingScene   # default
+        self._last_category    = 'steak'        # 'steak' or 'pancake'
 
     # ──────────────────────────────────────────────────────────── public ──────
 
@@ -275,7 +276,7 @@ class GameManager:
 
         elif self.state == 'NAME_INPUT':
             if key == 13 and self._player_name:
-                self.score.save(self._player_name)
+                self.score.save(self._player_name, self._last_category)
                 self.state = 'GAME_OVER'
             elif key == 8:
                 self._player_name = self._player_name[:-1]
@@ -300,6 +301,7 @@ class GameManager:
 
     def _launch_game(self):
         cls       = getattr(self, '_selected_scene', CookingScene)
+        self._last_category = 'pancake' if cls is PancakeScene else 'steak'
         self.game = cls()
         self.game.start()
         self._game_start_score = self.score.total_score
@@ -776,15 +778,52 @@ class GameManager:
         h, w = frame.shape[:2]
         dim(frame, 0.8)
 
-        draw_text_centered(frame, 'RANKING', 70, scale=2.2, color=COLOR_PRIMARY, thickness=3)
+        draw_text_centered(frame, 'RANKING', 62, scale=2.2, color=COLOR_PRIMARY, thickness=3)
 
-        rank_colors = [COLOR_PRIMARY, (180, 180, 220), (0, 165, 210)]
-        for i, entry in enumerate(self.score.rankings[:8]):
-            color = rank_colors[i] if i < 3 else COLOR_WHITE
-            text  = f"  {i+1}.  {entry['name']:<12}  {entry['score']:>6}    {entry['date']}"
-            draw_text_centered(frame, text, 145 + i * 58, scale=0.85, color=color)
+        rank_colors  = [COLOR_PRIMARY, (180, 180, 220), (0, 165, 210)]
+        col_centers  = [w // 4, w * 3 // 4]
+        categories   = ['steak',           'pancake']
+        col_headers  = ['Salisbury  Steak', 'Pancakes']
 
-        draw_text_centered(frame, 'SPACE / R: Play again', h - 55,
+        # Vertical divider
+        cv2.line(frame, (w // 2, 105), (w // 2, h - 75), (70, 72, 82), 2)
+
+        for ci, (cat, header) in enumerate(zip(categories, col_headers)):
+            cx_col   = col_centers[ci]
+            is_last  = (cat == self._last_category)
+            hcol     = COLOR_SUCCESS if is_last else COLOR_PRIMARY
+
+            # Column header + underline
+            (tw, _), _ = cv2.getTextSize(header, FONT, 0.88, 2)
+            cv2.putText(frame, header, (cx_col - tw // 2, 120),
+                        FONT, 0.88, hcol, 2, cv2.LINE_AA)
+            cv2.line(frame, (cx_col - 175, 130), (cx_col + 175, 130), hcol, 2)
+
+            entries = self.score.get_rankings(cat)[:6]
+            if not entries:
+                (ew, _), _ = cv2.getTextSize('No records yet', FONT, 0.65, 1)
+                cv2.putText(frame, 'No records yet', (cx_col - ew // 2, 220),
+                            FONT, 0.65, COLOR_GREY, 1, cv2.LINE_AA)
+                continue
+
+            for i, entry in enumerate(entries):
+                color = rank_colors[i] if i < 3 else COLOR_WHITE
+                y     = 178 + i * 68
+
+                # Rank
+                rank_txt = f'{i + 1}.'
+                cv2.putText(frame, rank_txt, (cx_col - 185, y),
+                            FONT, 0.80, color, 2, cv2.LINE_AA)
+                # Name
+                cv2.putText(frame, entry['name'][:12], (cx_col - 148, y),
+                            FONT, 0.80, COLOR_WHITE, 2, cv2.LINE_AA)
+                # Score (right-aligned within column)
+                sc_txt = str(entry['score'])
+                (sw, _), _ = cv2.getTextSize(sc_txt, FONT, 0.80, 2)
+                cv2.putText(frame, sc_txt, (cx_col + 185 - sw, y),
+                            FONT, 0.80, color, 2, cv2.LINE_AA)
+
+        draw_text_centered(frame, 'SPACE / R: Play again', h - 45,
                            scale=1.0, color=COLOR_GREY)
         return frame
 

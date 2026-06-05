@@ -29,17 +29,40 @@ _MX_ING_Y    = 300           # ingredient spawn y
 # ── Cook Pancake constants ────────────────────────────────────────────────────
 _PC_PAN_CX      = 640
 _PC_PAN_CY      = 390
-_PC_PAN_R       = 235
-_PC_PAN_AREA_R  = 188
-_PC_PAN_HX      = 640 - 235 - 80   # handle left side x  (= 325)
-_PC_PAN_HY      = 390               # handle y (same as pan center)
-_PC_GAUGE_SPEED = 0.0032       # fill per frame
-_PC_GREEN_MIN   = 0.58         # green zone start
-_PC_GREEN_MAX   = 0.88         # green zone end (burn if exceeded)
+_PC_PAN_R       = 175
+_PC_PAN_AREA_R  = 140
+_PC_PAN_HX      = 640               # handle bottom center x
+_PC_PAN_HY      = 390 + 175 + 65   # handle bottom y
+_PC_GAUGE_SPEED = 0.0038       # fill per frame (oscillates back and forth)
+_PC_GREEN_MIN   = 0.50         # green zone start
+_PC_GREEN_MAX   = 0.78         # green zone end → red zone after this
 _PC_FLIP_PX     = 65           # upward px to detect flip
-_PC_PLATE_X     = 1000         # plate resting x
+_PC_PLATE_X     = 160          # plate resting x (LEFT side)
 _PC_PLATE_Y     = 440          # plate resting y
 _PC_PLATE_GRAB_R = 80
+
+# ── Stack Pancake constants ───────────────────────────────────────────────────
+_ST_GOAL       = 3       # pancakes to stack
+_ST_PLATE_CX   = 640
+_ST_PLATE_Y    = 575     # plate center y
+_ST_PRX        = 115     # pancake rx (half-width)
+_ST_PRY        = 28      # pancake ry (perspective)
+_ST_THICK      = 22      # pancake side thickness
+_ST_SWING_Y    = 100     # y of swinging pancake
+_ST_AMPLITUDE  = 260     # oscillation amplitude px
+_ST_BASE_SPEED = 1.4     # oscillation rad/s (increases per stack)
+_ST_TOLERANCE  = 0.40    # 40% of pancake width
+_ST_FALL_SPEED = 14      # px per frame while falling
+
+# ── Syrup constants ───────────────────────────────────────────────────────────
+_SY_CX        = 640
+_SY_CY        = 360
+_SY_PR        = 200           # pancake radius
+_SY_BUTTER_W  = 90
+_SY_BUTTER_H  = 45
+_SY_COLOR     = (30, 120, 200)   # maple syrup BGR (amber)
+_SY_THICKNESS = 5
+_SY_GOAL_LEN  = 3200          # total stroke px to complete
 
 # ── Egg constants ─────────────────────────────────────────────────────────────
 _E_EGGS      = 2
@@ -78,7 +101,7 @@ class PancakeScene(BaseMiniGame):
     duration    = 180.0
     grab_phase  = True
 
-    _DEBUG_PHASES = ['egg_separate', 'mixer', 'cook_pancake']
+    _DEBUG_PHASES = ['egg_separate', 'mixer', 'cook_pancake', 'stack_pancake', 'syrup']
 
     def __init__(self):
         super().__init__()
@@ -86,6 +109,8 @@ class PancakeScene(BaseMiniGame):
         self._init_egg()
         self._init_mixer()
         self._init_cook_pancake()
+        self._init_stack_pancake()
+        self._init_syrup()
 
     def jump_to_phase(self, phase):
         self._phase = phase
@@ -94,6 +119,10 @@ class PancakeScene(BaseMiniGame):
             self._init_cook_pancake()
         elif phase == 'mixer':
             self._init_mixer()
+        elif phase == 'stack_pancake':
+            self._init_stack_pancake()
+        elif phase == 'syrup':
+            self._init_syrup()
 
     def _init_egg(self):
         self._e_current   = 0
@@ -132,6 +161,10 @@ class PancakeScene(BaseMiniGame):
             self._update_mixer(hands)
         elif self._phase == 'cook_pancake':
             self._update_cook_pancake(hands)
+        elif self._phase == 'stack_pancake':
+            self._update_stack_pancake(hands)
+        elif self._phase == 'syrup':
+            self._update_syrup(hands)
         return []
 
     def _update_egg(self, hands):
@@ -231,6 +264,10 @@ class PancakeScene(BaseMiniGame):
             return self._draw_mixer(frame)
         if self._phase == 'cook_pancake':
             return self._draw_cook_pancake(frame)
+        if self._phase == 'stack_pancake':
+            return self._draw_stack_pancake(frame)
+        if self._phase == 'syrup':
+            return self._draw_syrup(frame)
 
         # ── Bowl ──────────────────────────────────────────────────────────────
         bcx, bcy = _E_BOWL_CX, _E_BOWL_CY
@@ -438,15 +475,15 @@ class PancakeScene(BaseMiniGame):
 
     def _init_cook_pancake(self):
         self._pc_gauge      = [0.0, 0.0]   # side 0 and side 1 fill
-        self._pc_side       = 0            # current cooking side
-        self._pc_subphase   = 'cook'       # 'cook' | 'flip_anim' | 'serve'
-        self._pc_flip_anim  = 0            # 0=none, 1-40=in air
+        self._pc_gauge_dir  = [1,   1]     # oscillation direction (+1 / -1)
+        self._pc_side       = 0
+        self._pc_subphase   = 'cook'
+        self._pc_flip_anim   = 0
+        self._pc_flip_count  = 0   # total flips done (0→serve after 2nd flip)
         self._pc_pan_grabbed = False
         self._pc_flip_prev_y = None
         self._pc_plate_grabbed = False
         self._pc_plate_pos   = [float(_PC_PLATE_X), float(_PC_PLATE_Y)]
-        self._pc_pancake_x   = float(_PC_PAN_CX)
-        self._pc_pancake_y   = float(_PC_PAN_CY)
 
     def _update_cook_pancake(self, hands):
         sp = self._pc_subphase
@@ -455,27 +492,22 @@ class PancakeScene(BaseMiniGame):
         if sp == 'flip_anim':
             self._pc_flip_anim -= 1
             if self._pc_flip_anim == 20:
-                self._pc_side = 1         # switched to side 1
+                self._pc_side = 1 - self._pc_side
             if self._pc_flip_anim <= 0:
-                self._pc_subphase = 'cook'
-                self._pc_pan_grabbed = False
-                self._pc_flip_prev_y = None
+                self._pc_flip_count += 1
+                self._pc_pan_grabbed  = False
+                self._pc_flip_prev_y  = None
+                if self._pc_flip_count >= 2:
+                    self._pc_subphase = 'serve'
+                else:
+                    self._pc_subphase = 'cook'
             return
 
-        # ── Fill gauge for current side ───────────────────────────────────────
-        if sp == 'cook':
-            s = self._pc_side
-            if self._pc_gauge[s] < _PC_GREEN_MAX:
-                self._pc_gauge[s] = min(_PC_GREEN_MAX,
-                                        self._pc_gauge[s] + _PC_GAUGE_SPEED)
+        in_green = _PC_GREEN_MIN <= self._pc_gauge[self._pc_side] <= _PC_GREEN_MAX
 
-            # After gauge[0] reaches green: prompt to flip
-            if s == 0 and self._pc_gauge[0] >= _PC_GREEN_MIN:
-                self._handle_flip(hands)
-
-            # After gauge[1] reaches green: go to serve
-            if s == 1 and self._pc_gauge[1] >= _PC_GREEN_MIN:
-                self._pc_subphase = 'serve'
+        # ── Cook: flip when gauge is in green zone ────────────────────────────
+        if sp == 'cook' and in_green:
+            self._handle_flip(hands)
 
         # ── Serve phase ───────────────────────────────────────────────────────
         elif sp == 'serve':
@@ -494,12 +526,21 @@ class PancakeScene(BaseMiniGame):
                 self._pc_plate_pos[1] = hy
                 if not hand.gripped:
                     self._pc_plate_grabbed = False
-                # Pancake reached pan area?
                 dx = self._pc_plate_pos[0] - _PC_PAN_CX
                 dy = self._pc_plate_pos[1] - _PC_PAN_CY
                 if dx*dx + dy*dy < (_PC_PAN_R * 0.85)**2:
-                    self._phase = 'complete'
+                    self._phase = 'stack_pancake'
+                    self._init_stack_pancake()
                 break
+
+        # ── Oscillating gauge — frozen in serve ───────────────────────────────
+        if sp == 'cook':
+            s = self._pc_side
+            self._pc_gauge[s] += _PC_GAUGE_SPEED * self._pc_gauge_dir[s]
+            if self._pc_gauge[s] >= 1.0:
+                self._pc_gauge[s] = 1.0; self._pc_gauge_dir[s] = -1
+            elif self._pc_gauge[s] <= 0.0:
+                self._pc_gauge[s] = 0.0; self._pc_gauge_dir[s] = 1
 
     def _handle_flip(self, hands):
         for hand in hands:
@@ -530,35 +571,36 @@ class PancakeScene(BaseMiniGame):
         cx, cy = _PC_PAN_CX, _PC_PAN_CY
         sp = self._pc_subphase
 
-        # ── Stove ring ────────────────────────────────────────────────────────
-        cv2.ellipse(frame, (cx+5, cy+8), (_PC_PAN_R+38, _PC_PAN_R+38),
-                    0, 0, 360, (18,15,12), -1)
-        cv2.ellipse(frame, (cx, cy), (_PC_PAN_R+38, _PC_PAN_R+38),
-                    0, 0, 360, (55, 180, 230), -1)   # blue/orange stove
-        cv2.ellipse(frame, (cx, cy), (_PC_PAN_R+24, _PC_PAN_R+24),
-                    0, 0, 360, (40, 40, 200), -1)    # inner ring (red-orange)
-        # Flame glow
-        cv2.ellipse(frame, (cx, cy), (_PC_PAN_R+12, _PC_PAN_R+12),
-                    0, 0, 360, (18, 108, 220), -1)
+        # ── Stove base ────────────────────────────────────────────────────────
+        cv2.ellipse(frame, (cx, cy + _PC_PAN_R + 18), (_PC_PAN_R+45, 38),
+                    0, 0, 360, (48, 44, 40), -1)
+
+        # ── Flames ────────────────────────────────────────────────────────────
+        fl_span = int(_PC_PAN_R * 1.55)
+        for fi in range(9):
+            fx  = cx - fl_span//2 + fi * (fl_span//8)
+            flk = int(14 * math.sin(t * 9.5 + fi * 1.3))
+            fy0 = cy + _PC_PAN_R + 5
+            cv2.ellipse(frame, (fx, fy0), (7, 16+flk//2), 0, 0, 360, (190,95,18), -1)
+            pts_f = np.array([[fx-11,fy0],[fx,fy0-44-flk],[fx+11,fy0]], np.int32)
+            cv2.fillPoly(frame, [pts_f], (0, int(148+flk*3), 255))
 
         # ── Pan body ──────────────────────────────────────────────────────────
         cv2.circle(frame, (cx+4, cy+4), _PC_PAN_R, (15,12,10), -1)
         cv2.circle(frame, (cx, cy), _PC_PAN_R, (42, 38, 34), -1)
         cv2.circle(frame, (cx, cy), _PC_PAN_R, (22, 18, 14), 8)
-        # Cooking surface
         cook_heat = self._pc_gauge[self._pc_side]
         sv = int(138 - cook_heat * 22)
         cv2.circle(frame, (cx, cy), _PC_PAN_AREA_R, (sv, sv+2, sv+4), -1)
         cv2.circle(frame, (cx, cy), _PC_PAN_AREA_R, (55, 50, 45), 2)
 
-        # ── Pan handle (LEFT side) ────────────────────────────────────────────
-        hx1 = cx - _PC_PAN_R + 12
-        hx2 = cx - _PC_PAN_R - 150
-        cv2.rectangle(frame, (hx2, cy-22), (hx1, cy+22), (28, 24, 20), -1)
-        cv2.rectangle(frame, (hx2, cy-22), (hx1, cy+22), (12, 10, 8),  3)
-        # Grip texture
-        for gx in range(hx2+20, hx1-10, 22):
-            cv2.line(frame, (gx, cy-18), (gx, cy+18), (40, 36, 32), 3)
+        # ── Pan handle (BOTTOM) ───────────────────────────────────────────────
+        hy1 = cy + _PC_PAN_R - 10
+        hy2 = _PC_PAN_HY + 28
+        cv2.rectangle(frame, (cx-24, hy1), (cx+24, hy2), (30, 26, 22), -1)
+        cv2.rectangle(frame, (cx-24, hy1), (cx+24, hy2), (14, 11, 9), 3)
+        for gy in range(hy1+20, hy2-10, 22):
+            cv2.line(frame, (cx-20, gy), (cx+20, gy), (42, 38, 34), 3)
 
         # ── Pancake ───────────────────────────────────────────────────────────
         flip_frac  = self._pc_flip_anim / 40.0
@@ -600,17 +642,16 @@ class PancakeScene(BaseMiniGame):
                     tuple(max(0,c-40) for c in top_col), 3)
 
         # ── Grab ring on handle (flip prompt) ────────────────────────────────
-        if (sp == 'cook' and self._pc_side == 0
-                and self._pc_gauge[0] >= _PC_GREEN_MIN
+        if (sp == 'cook'
+                and self._pc_gauge[self._pc_side] >= _PC_GREEN_MIN
                 and not self._pc_pan_grabbed
                 and self._pc_flip_anim == 0):
             rr = int(52 + 8*abs(math.sin(t*5)))
             cv2.circle(frame, (_PC_PAN_HX, _PC_PAN_HY), rr, (0,200,255), 2, cv2.LINE_AA)
             _shadow_text(frame, 'GRAB & Flick UP!', _PC_PAN_HX,
-                         _PC_PAN_HY - rr - 14, 0.62, (0,200,255), 1, center=True)
-            # Up arrow
-            cv2.arrowedLine(frame, (_PC_PAN_HX, _PC_PAN_HY + 40),
-                            (_PC_PAN_HX, _PC_PAN_HY - 50),
+                         _PC_PAN_HY + rr + 20, 0.62, (0,200,255), 1, center=True)
+            cv2.arrowedLine(frame, (_PC_PAN_HX + 80, _PC_PAN_HY),
+                            (_PC_PAN_HX + 80, _PC_PAN_HY - 70),
                             (0,200,255), 3, tipLength=0.35)
 
         # ── Plate (serve phase) ───────────────────────────────────────────────
@@ -627,19 +668,18 @@ class PancakeScene(BaseMiniGame):
                 cv2.circle(frame, (px, py), rr, (80,220,140), 2, cv2.LINE_AA)
                 _shadow_text(frame, 'GRAB PLATE!', px, py - rr - 14,
                              0.62, (80,220,140), 1, center=True)
-            cv2.arrowedLine(frame, (px-60, py), (px-180, py),
+            cv2.arrowedLine(frame, (px+60, py), (px+200, py),
                             (80,220,140), 3, tipLength=0.28)
 
-        # ── Gauges (top right, with face emoji) ───────────────────────────────
-        gx0 = w - 340
-        for idx, gy in enumerate([30, 85]):
-            done  = self._pc_gauge[idx] >= _PC_GREEN_MIN
-            face  = ':)' if done else ':('
-            fcol  = (50,220,80) if done else (50,80,220)
-            # face circle
-            cv2.circle(frame, (gx0 - 28, gy+20), 22, fcol, -1)
-            cv2.circle(frame, (gx0 - 28, gy+20), 22, (255,255,255), 2)
-            _shadow_text(frame, face, gx0-28, gy+27, 0.48, (255,255,255), 1, center=True)
+        # ── Gauges (right center, large and clear) ────────────────────────────
+        gx0 = w - 320
+        for idx, gy in enumerate([h//2 - 70, h//2 + 10]):
+            in_g  = _PC_GREEN_MIN <= self._pc_gauge[idx] <= _PC_GREEN_MAX
+            face  = ':)' if in_g else ':('
+            fcol  = (50,220,80) if in_g else (50,80,220)
+            cv2.circle(frame, (gx0 - 30, gy+22), 24, fcol, -1)
+            cv2.circle(frame, (gx0 - 30, gy+22), 24, (255,255,255), 2)
+            _shadow_text(frame, face, gx0-30, gy+29, 0.50, (255,255,255), 1, center=True)
             self._draw_gauge_bar(frame, gx0, gy, self._pc_gauge[idx], f'Side {idx+1}')
 
         # ── Instruction ───────────────────────────────────────────────────────
@@ -653,22 +693,275 @@ class PancakeScene(BaseMiniGame):
         return frame
 
     def _draw_gauge_bar(self, frame, bx, by, value, label):
-        bw, bh = 300, 38
-        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (25,22,18), -1)
-        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (60,58,52), 2)
+        bw, bh = 280, 44
+        # Background
+        cv2.rectangle(frame, (bx-2, by-2), (bx+bw+2, by+bh+2), (18,16,14), -1)
+        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (30,28,24), -1)
+        # Zone colors: red → green → red (bounce)
         zones = [
-            (0.0,        _PC_GREEN_MIN,  (40, 55, 210)),   # red
-            (_PC_GREEN_MIN, _PC_GREEN_MAX, (50, 210, 80)),  # green
+            (0.0,          _PC_GREEN_MIN,  (38, 48, 210)),   # left red
+            (_PC_GREEN_MIN, _PC_GREEN_MAX, (45, 210, 75)),    # green (perfect)
+            (_PC_GREEN_MAX, 1.0,           (30, 35, 195)),    # right red (burnt)
         ]
         for zs, ze, col in zones:
-            x1 = bx + int(zs * bw) + 2
+            x1 = bx + int(zs * bw) + 1
             x2 = bx + int(ze * bw) - 1
             if x2 > x1:
                 cv2.rectangle(frame, (x1, by+3), (x2, by+bh-3), col, -1)
-        # Moving indicator pin
+        cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), (65,62,55), 2)
+        # Moving indicator pin (white bar)
         fill_x = bx + int(value * bw)
-        cv2.rectangle(frame, (fill_x-5, by-5), (fill_x+5, by+bh+5), (255,255,255), -1)
-        cv2.rectangle(frame, (fill_x-5, by-5), (fill_x+5, by+bh+5), (70,75,90), 2)
+        cv2.rectangle(frame, (fill_x-6, by-6), (fill_x+6, by+bh+6), (255,255,255), -1)
+        cv2.rectangle(frame, (fill_x-6, by-6), (fill_x+6, by+bh+6), (80,85,100), 2)
+        # Label
+        _shadow_text(frame, label, bx, by - 14, 0.52, (200,210,225), 1)
+
+    # ── Stack Pancake phase ──────────────────────────────────────────────────
+
+    def _init_stack_pancake(self):
+        self._st_count      = 0             # stacked so far
+        self._st_stack_x    = [_ST_PLATE_CX]  # x center of each layer
+        self._st_swing_x    = float(_ST_PLATE_CX)
+        self._st_swing_t    = 0.0           # phase offset (for oscillation)
+        self._st_dropping   = False
+        self._st_drop_x     = float(_ST_PLATE_CX)
+        self._st_drop_y     = float(_ST_SWING_Y)
+        self._st_fail_anim  = 0
+        self._st_succ_anim  = 0
+        self._st_grip_prev  = False         # previous grip state
+
+    def _update_stack_pancake(self, hands):
+        if self._st_fail_anim > 0:
+            self._st_fail_anim -= 1
+            return
+        if self._st_succ_anim > 0:
+            self._st_succ_anim -= 1
+            return
+
+        speed = _ST_BASE_SPEED * (1.0 + self._st_count * 0.45)
+
+        if not self._st_dropping:
+            # Oscillate
+            self._st_swing_t += speed / 30.0
+            self._st_swing_x = _ST_PLATE_CX + _ST_AMPLITUDE * math.sin(self._st_swing_t)
+
+            # Drop on grip press (rising edge: not gripped → gripped)
+            gripped_now = any(h.detected and h.gripped for h in hands)
+            if gripped_now and not self._st_grip_prev:
+                self._st_dropping = True
+                self._st_drop_x   = self._st_swing_x
+                self._st_drop_y   = float(_ST_SWING_Y)
+            self._st_grip_prev = gripped_now
+        else:
+            # Fall
+            self._st_drop_y += _ST_FALL_SPEED
+            target_y = _ST_PLATE_Y - self._st_count * (_ST_THICK + _ST_PRY * 2)
+
+            if self._st_drop_y >= target_y:
+                self._st_drop_y = float(target_y)
+                # Check accuracy
+                target_x = self._st_stack_x[-1]
+                offset   = abs(self._st_drop_x - target_x)
+                allowed  = _ST_PRX * _ST_TOLERANCE * 2   # 40% of full width
+                if offset <= allowed:
+                    # Success
+                    self._st_stack_x.append(int(self._st_drop_x))
+                    self._st_count    += 1
+                    self._st_succ_anim = 22
+                    if self._st_count >= _ST_GOAL:
+                        self._phase = 'syrup'
+                        self._init_syrup()
+                else:
+                    self._st_fail_anim = 30
+                self._st_dropping  = False
+                self._st_grip_prev = False
+
+    def _draw_stack_pancake(self, frame):
+        t  = time.time()
+        h, w = frame.shape[:2]
+
+        # ── Plate ────────────────────────────────────────────────────────────
+        pcx, pcy = _ST_PLATE_CX, _ST_PLATE_Y + 30
+        cv2.ellipse(frame, (pcx+5, pcy+10), (145, 46), 0, 0, 360, (15,12,10), -1)
+        cv2.ellipse(frame, (pcx, pcy+2), (152, 50), 0, 0, 360, (38,38,150), -1)
+        cv2.ellipse(frame, (pcx, pcy), (142, 44), 0, 0, 360, (242,246,252), -1)
+        cv2.ellipse(frame, (pcx, pcy), (128, 36), 0, 0, 360, (228,232,242), -1)
+        cv2.ellipse(frame, (pcx, pcy), (142, 44), 0, 0, 360, (172,178,192), 3)
+
+        # ── Stacked pancakes ──────────────────────────────────────────────────
+        for idx in range(self._st_count):
+            sx   = self._st_stack_x[idx + 1]
+            sy   = _ST_PLATE_Y - idx * (_ST_THICK + _ST_PRY * 2)
+            cook = 0.7
+            tc   = cook
+            col  = (int(48+tc*20), int(168-tc*8), int(215-tc*5))
+            side = tuple(max(0,c-30) for c in col)
+            # Side
+            cv2.rectangle(frame, (sx-_ST_PRX, sy), (sx+_ST_PRX, sy+_ST_THICK),
+                          side, -1)
+            cv2.ellipse(frame, (sx, sy+_ST_THICK), (_ST_PRX, _ST_PRY),
+                        0, 0, 360, side, -1)
+            # Top
+            cv2.ellipse(frame, (sx+2, sy+2), (_ST_PRX+2, _ST_PRY+2),
+                        0, 0, 360, (15,12,10), -1)
+            cv2.ellipse(frame, (sx, sy), (_ST_PRX, _ST_PRY), 0, 0, 360, col, -1)
+            cv2.ellipse(frame, (sx, sy), (_ST_PRX, _ST_PRY),
+                        0, 0, 360, tuple(max(0,c-40) for c in col), 2)
+
+        # ── Target shadow on top of stack ─────────────────────────────────────
+        tgt_x = self._st_stack_x[-1]
+        tgt_y = _ST_PLATE_Y - self._st_count * (_ST_THICK + _ST_PRY * 2)
+        allow = int(_ST_PRX * _ST_TOLERANCE * 2)
+        cv2.ellipse(frame, (tgt_x, tgt_y), (allow, _ST_PRY//2),
+                    0, 0, 360, (80, 220, 120), 2)   # green target zone
+
+        # ── Swinging / falling pancake ────────────────────────────────────────
+        if self._st_dropping:
+            dx = int(self._st_drop_x)
+            dy = int(self._st_drop_y)
+        else:
+            dx = int(self._st_swing_x)
+            dy = _ST_SWING_Y
+
+        col_s  = (48, 168, 215)
+        side_s = (25, 138, 185)
+        cv2.rectangle(frame, (dx-_ST_PRX, dy), (dx+_ST_PRX, dy+_ST_THICK), side_s, -1)
+        cv2.ellipse(frame, (dx, dy+_ST_THICK), (_ST_PRX, _ST_PRY), 0, 0, 360, side_s, -1)
+        cv2.ellipse(frame, (dx+2, dy+2), (_ST_PRX+2, _ST_PRY+2), 0, 0, 360, (15,12,10), -1)
+        cv2.ellipse(frame, (dx, dy), (_ST_PRX, _ST_PRY), 0, 0, 360, col_s, -1)
+        cv2.ellipse(frame, (dx, dy), (_ST_PRX, _ST_PRY),
+                    0, 0, 360, tuple(max(0,c-40) for c in col_s), 2)
+
+        # Accuracy indicator (distance from target)
+        if not self._st_dropping:
+            offset = abs(self._st_swing_x - tgt_x)
+            in_zone = offset <= _ST_PRX * _ST_TOLERANCE * 2
+            ind_col = (50, 220, 80) if in_zone else (50, 80, 220)
+            pulse   = int(8*abs(math.sin(t*8))) if in_zone else 0
+            cv2.line(frame, (dx, dy + _ST_PRY + 5),
+                     (tgt_x, tgt_y - _ST_PRY - 5), ind_col, 2, cv2.LINE_AA)
+            if in_zone:
+                _shadow_text(frame, 'DROP!', dx, dy - 28,
+                             0.80, (50,230,80), 2, center=True)
+
+        # Fail / success flash
+        if self._st_fail_anim > 0 and self._st_fail_anim % 5 < 3:
+            cv2.rectangle(frame, (0,0), (w,h), (0,0,200), 10)
+            _shadow_text(frame, 'Too far!  Try again', w//2, h//2,
+                         0.90, (80,120,255), 2, center=True)
+        if self._st_succ_anim > 0:
+            _shadow_text(frame, 'Nice!', w//2, h//2,
+                         1.2, (50,230,80), 3, center=True)
+
+        # ── HUD ───────────────────────────────────────────────────────────────
+        _shadow_text(frame, f'{self._st_count} / {_ST_GOAL}  stacked',
+                     w//2, 45, 0.90, (255,230,100), 2, center=True)
+        _shadow_text(frame, 'GRIP to drop!  Aim for the GREEN circle',
+                     w//2, h-32, 0.60, (200,210,228), 1, center=True)
+        return frame
+
+    # ── Syrup phase ───────────────────────────────────────────────────────────
+
+    def _init_syrup(self):
+        self._sy_strokes   = []       # list of strokes; each stroke = list of (x,y)
+        self._sy_drawing   = False
+        self._sy_prev_pos  = None
+        self._sy_total_len = 0.0
+
+    def _update_syrup(self, hands):
+        for hand in hands:
+            if not hand.detected:
+                if self._sy_drawing:
+                    self._sy_drawing  = False
+                    self._sy_prev_pos = None
+                continue
+            hx, hy = float(hand.screen_x), float(hand.screen_y)
+            if hand.gripped:
+                if not self._sy_drawing:
+                    self._sy_drawing = True
+                    self._sy_strokes.append([(hx, hy)])
+                    self._sy_prev_pos = (hx, hy)
+                else:
+                    if self._sy_prev_pos is not None:
+                        dx = hx - self._sy_prev_pos[0]
+                        dy = hy - self._sy_prev_pos[1]
+                        self._sy_total_len += math.sqrt(dx*dx + dy*dy)
+                    self._sy_strokes[-1].append((hx, hy))
+                    self._sy_prev_pos = (hx, hy)
+            else:
+                if self._sy_drawing:
+                    self._sy_drawing  = False
+                    self._sy_prev_pos = None
+            break
+
+        if self._sy_total_len >= _SY_GOAL_LEN:
+            self._phase = 'complete'
+
+    def _draw_syrup(self, frame):
+        t = time.time()
+        h, w = frame.shape[:2]
+        cx, cy = _SY_CX, _SY_CY
+
+        # ── Pancake ────────────────────────────────────────────────────────────
+        cv2.circle(frame, (cx+5, cy+6), _SY_PR+5, (15, 12, 10), -1)
+        cv2.circle(frame, (cx, cy), _SY_PR, (62, 162, 211), -1)
+        cv2.circle(frame, (cx, cy), _SY_PR, (42, 138, 188), 5)
+
+        # ── Butter ─────────────────────────────────────────────────────────────
+        bx1 = cx - _SY_BUTTER_W // 2
+        by1 = cy - _SY_BUTTER_H // 2
+        bx2 = cx + _SY_BUTTER_W // 2
+        by2 = cy + _SY_BUTTER_H // 2
+        cv2.rectangle(frame, (bx1+3, by1+3), (bx2+3, by2+3), (15, 12, 10), -1)
+        cv2.rectangle(frame, (bx1, by1), (bx2, by2), (120, 240, 255), -1)
+        cv2.rectangle(frame, (bx1, by1), (bx2, by2), (90, 210, 235), 2)
+
+        # ── Zigzag guide (blinks until drawing starts) ────────────────────────
+        if self._sy_total_len == 0 and int(t * 3) % 2 == 0:
+            n_rows  = 7
+            r_inner = _SY_PR * 0.82
+            y_start = -int(r_inner)
+            angle   = math.pi / 4   # 45° CCW → left end points upward
+            pts = []
+            for i in range(n_rows + 1):
+                ly     = y_start + i * int(r_inner * 2 / n_rows)
+                dy_abs = abs(ly)
+                mx     = int(math.sqrt(max(0, r_inner**2 - dy_abs**2)))
+                lx     = -mx if i % 2 == 0 else mx
+                # Rotate around pancake center
+                rx = int(cx + lx * math.cos(angle) - ly * math.sin(angle))
+                ry = int(cy + lx * math.sin(angle) + ly * math.cos(angle))
+                # Clip to circle
+                ddx, ddy = rx - cx, ry - cy
+                dist = math.sqrt(ddx**2 + ddy**2)
+                if dist > r_inner:
+                    s  = r_inner / dist
+                    rx = int(cx + ddx * s)
+                    ry = int(cy + ddy * s)
+                pts.append((rx, ry))
+            for i in range(1, len(pts)):
+                cv2.line(frame, pts[i-1], pts[i], _SY_COLOR, 2, cv2.LINE_AA)
+            _shadow_text(frame, 'GRIP & DRIZZLE!', cx, cy - _SY_PR - 18,
+                         0.70, (0, 200, 255), 1, center=True)
+
+        # ── Syrup strokes ──────────────────────────────────────────────────────
+        for stroke in self._sy_strokes:
+            for i in range(1, len(stroke)):
+                p1 = (int(stroke[i-1][0]), int(stroke[i-1][1]))
+                p2 = (int(stroke[i][0]),   int(stroke[i][1]))
+                cv2.line(frame, p1, p2, _SY_COLOR, _SY_THICKNESS, cv2.LINE_AA)
+
+        # ── Progress bar ───────────────────────────────────────────────────────
+        prog  = min(1.0, self._sy_total_len / _SY_GOAL_LEN)
+        bar_w = 300
+        bx    = w//2 - bar_w//2
+        bar_y = h - 58
+        cv2.rectangle(frame, (bx, bar_y), (bx+bar_w, bar_y+18), (40, 38, 35), -1)
+        cv2.rectangle(frame, (bx, bar_y), (bx+int(prog*bar_w), bar_y+18), _SY_COLOR, -1)
+        cv2.rectangle(frame, (bx, bar_y), (bx+bar_w, bar_y+18), (80, 78, 72), 2)
+        _shadow_text(frame, 'Drizzle maple syrup!', w//2, h - 72,
+                     0.65, (200, 210, 230), 1, center=True)
+        return frame
 
     # ── Mixer phase ───────────────────────────────────────────────────────────
 
