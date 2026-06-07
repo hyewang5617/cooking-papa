@@ -21,6 +21,11 @@ class BaseMiniGame:
         if self._start_time is None:
             self._start_time = time.time()
 
+    def extend_start_time(self, seconds):
+        """Shift the timer's start point forward so a pause doesn't eat into time_remaining."""
+        if self._start_time is not None:
+            self._start_time += seconds
+
     @property
     def timer_started(self):
         return self._start_time is not None

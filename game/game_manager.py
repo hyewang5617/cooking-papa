@@ -203,6 +203,10 @@ class GameManager:
         self._MENU_HOLD_FRAMES = 22
         # Stage select grab state
         self._stage_btn_hold   = [0, 0]
+        # Pause menu grab state
+        self._pause_btn_hold   = [0, 0]
+        self._pause_from_state = 'PLAYING'
+        self._pause_last_t     = 0.0
         self._selected_scene   = CookingScene   # default
         self._last_category    = 'steak'        # 'steak' or 'pancake'
 
@@ -227,6 +231,7 @@ class GameManager:
             'TUTORIAL':     self._tutorial,
             'COUNTDOWN':    self._countdown,
             'PLAYING':    self._playing,
+            'PAUSED':     self._paused,
             'RESULT':     self._result,
             'NAME_INPUT': self._name_input,
             'GAME_OVER':  self._game_over,
@@ -259,10 +264,21 @@ class GameManager:
             self._stage_btn_hold = [0, 0]
 
         elif self.state == 'STAGE_SELECT':
-            if key == 27 or key == ord('q'):   # ESC → back to menu
+            if key == 27 or key == ord('q'):   # ESC → back to menu (title)
                 self.state = 'MENU'
             elif key == 13:                    # Enter → steak (only stage available)
                 self._begin_countdown()
+
+        elif self.state == 'PLAYING':
+            if key == 27:                      # ESC → pause
+                self._pause_from_state = 'PLAYING'
+                self._pause_btn_hold   = [0, 0]
+                self._pause_last_t     = 0.0
+                self.state = 'PAUSED'
+
+        elif self.state == 'PAUSED':
+            if key == 27:                      # ESC → resume
+                self.state = self._pause_from_state
 
         elif self.state == 'TUTORIAL':
             if key == ord(' '):
@@ -730,6 +746,86 @@ class GameManager:
             self.game_idx += 1
             self._result_start = time.time()
             self.state = 'RESULT'
+        return frame
+
+    def _paused(self, frame):
+        import math as _math
+        h, w = frame.shape[:2]
+        t = time.time()
+
+        # Freeze the mini-game's countdown: each frame, push its start time
+        # forward by exactly the wall-clock time that just passed, so
+        # time_remaining stays constant while the pause screen is shown.
+        if self.game:
+            if self._pause_last_t == 0.0:
+                self._pause_last_t = t
+            self.game.extend_start_time(t - self._pause_last_t)
+            self._pause_last_t = t
+
+        if self.game:
+            frame = self.game.draw(frame, self.hand_states)
+            self._hud(frame)
+        dim(frame, 0.6)
+
+        draw_text_centered(frame, 'PAUSED', h // 2 - 130,
+                           scale=2.2, color=COLOR_WHITE, thickness=4)
+
+        btn_labels = ['TITLE', 'QUIT GAME']
+        btn_colors = [(36, 130, 210), (55, 55, 175)]
+        btn_w, btn_h = 230, 68
+        gap      = 32
+        total_w  = 2 * btn_w + gap
+        btn_y    = h // 2 - btn_h // 2
+        btns_x0  = (w - total_w) // 2
+
+        hand_sx, hand_sy, hand_gripped = -1, -1, False
+        if self.hand_states:
+            hs = self.hand_states[0]
+            if hs.detected:
+                hand_sx, hand_sy, hand_gripped = hs.screen_x, hs.screen_y, hs.gripped
+
+        activated = -1
+        for bi in range(2):
+            bx_btn = btns_x0 + bi * (btn_w + gap)
+            cx_btn = bx_btn + btn_w // 2
+            cy_btn = btn_y + btn_h // 2
+            over   = (bx_btn <= hand_sx <= bx_btn + btn_w and
+                      btn_y  <= hand_sy <= btn_y  + btn_h and hand_gripped)
+            if over:
+                self._pause_btn_hold[bi] += 1
+            else:
+                self._pause_btn_hold[bi] = max(0, self._pause_btn_hold[bi] - 2)
+            hold_frac = self._pause_btn_hold[bi] / self._MENU_HOLD_FRAMES
+            if hold_frac >= 1.0:
+                activated = bi
+                self._pause_btn_hold = [0, 0]
+
+            pulse = int(5 * abs(_math.sin(t * 4 + bi))) if over else 0
+            col   = btn_colors[bi]
+            draw_col = tuple(min(255, c + 55) for c in col) if over else col
+            cv2.rectangle(frame, (bx_btn+5, btn_y+5), (bx_btn+btn_w+5, btn_y+btn_h+5),
+                          (20,18,16), -1)
+            cv2.rectangle(frame, (bx_btn-pulse, btn_y-pulse),
+                          (bx_btn+btn_w+pulse, btn_y+btn_h+pulse), draw_col, -1)
+            cv2.rectangle(frame, (bx_btn, btn_y), (bx_btn+btn_w, btn_y+btn_h),
+                          (255,255,255), 2)
+            lbl = btn_labels[bi]
+            (tw, th), _ = cv2.getTextSize(lbl, FONT, 0.85, 2)
+            cv2.putText(frame, lbl, (cx_btn - tw//2, cy_btn + th//2),
+                        FONT, 0.85, (255,255,255), 2, cv2.LINE_AA)
+            if hold_frac > 0:
+                bar_w = int((btn_w - 14) * hold_frac)
+                cv2.rectangle(frame, (bx_btn+7, btn_y+btn_h-10),
+                              (bx_btn+7+bar_w, btn_y+btn_h-4), (255,255,255), -1)
+
+        if activated == 0:
+            self._reset()
+        elif activated == 1:
+            import sys; sys.exit(0)
+
+        draw_text_centered(frame, 'Grip over a button to select   |   ESC: resume',
+                           btn_y + btn_h + 44, scale=0.62,
+                           color=(200, 200, 220), thickness=1)
         return frame
 
     def _result(self, frame):
