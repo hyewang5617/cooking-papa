@@ -14,8 +14,9 @@ from .ui import (draw_panel, draw_progress_bar, draw_text, draw_text_centered,
                  COLOR_WHITE, COLOR_GREY, FONT)
 
 SEQUENCE = [CookingScene]
-POINTS   = {'cut': 10, 'stir': 15, 'flip': 20, 'grab': 0}
-BONUS    = {CookingScene: 300}
+POINTS   = {'cut': 10, 'stir': 15, 'flip': 20, 'grab': 0,
+            'crack': 12, 'mix': 12, 'stack': 18, 'serve': 15, 'drizzle': 12}
+BONUS    = {CookingScene: 300, PancakeScene: 300}
 
 
 def _grade(score):

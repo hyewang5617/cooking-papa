@@ -290,7 +290,6 @@ class CookingScene(BaseMiniGame):
         self._prev_hand_onion = None
         self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
         self._fry_spatula_hand = -1
-        self._onion_stirring   = False
 
         # Cook steak state
         self._sk_queue         = []
@@ -328,6 +327,7 @@ class CookingScene(BaseMiniGame):
         self._knead_prev_ang      = None
         self._knead_rot_total     = 0.0
         self._knead_mix_angle     = 0.0
+        self._knead_active        = False
         self._kn_meat_r = self._kn_meat_ang = self._kn_meat_w = None
         self._kn_meat_h = self._kn_meat_rot = self._kn_meat_col = None
         self._kn_onion_r = self._kn_onion_ang = self._kn_onion_w = None
@@ -450,7 +450,7 @@ class CookingScene(BaseMiniGame):
         p = self._phase
 
         audio.loop_cooking(p in ('cook_steak', 'onion_fry'))
-        audio.loop_mixing(p == 'onion_fry' and self._onion_stirring)
+        audio.loop_mixing(p == 'knead' and self._knead_active)
         audio.loop_grinding(p == 'meat_mix' and self._meat_handle_grabbed)
         audio.loop_knife((p == 'dice_onion'  and self._dice_knife_hand  != -1) or
                          (p == 'slice_onion' and self._slice_knife_hand != -1) or
@@ -1091,7 +1091,6 @@ class CookingScene(BaseMiniGame):
         self._prev_hand_onion = None
         self._fry_spatula_pos  = [ONION_PAN_CX + ONION_PAN_R + 60, ONION_PAN_CY]
         self._fry_spatula_hand = -1
-        self._onion_stirring   = False
 
     def _update_onion_fry(self, hands):
         _SPATULA_GRAB_R = 70
@@ -1150,7 +1149,6 @@ class CookingScene(BaseMiniGame):
             self._prev_hand_onion = (hx, hy)
 
             if abs(dhx) + abs(dhy) > 0.8:
-                self._onion_stirring = True
                 sx_pos = float(self._fry_spatula_pos[0])
                 sy_pos = float(self._fry_spatula_pos[1])
                 dx   = self._onion_pos[:, 0] - sx_pos
@@ -2071,6 +2069,7 @@ class CookingScene(BaseMiniGame):
         self._knead_prev_ang      = None
         self._knead_rot_total     = 0.0
         self._knead_mix_angle     = 0.0
+        self._knead_active        = False
         self._kn_onion_spread     = 1.0
         # Precompute meat blob positions (polar, rotated by mix_angle each frame)
         rng = np.random.default_rng(seed=42)
@@ -2118,8 +2117,10 @@ class CookingScene(BaseMiniGame):
 
     def _do_knead(self, hands):
         if self._knead_sub == 'pour_onion':
+            self._knead_active = False
             return self._do_knead_pour(hands)
-        elif self._knead_sub == 'arrows':
+        self._knead_active = any(hand.detected and hand.gripped for hand in hands)
+        if self._knead_sub == 'arrows':
             return self._do_knead_arrows(hands)
         else:
             return self._do_knead_rotate(hands)

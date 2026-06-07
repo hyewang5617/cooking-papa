@@ -204,24 +204,26 @@ class PancakeScene(BaseMiniGame):
                     self._init_syrup()
             return []
 
+        events = []
         if self._phase == 'egg_separate':
-            self._update_egg(hands)
+            events += self._update_egg(hands)
         elif self._phase == 'mixer':
-            self._update_mixer(hands)
+            events += self._update_mixer(hands)
         elif self._phase == 'cook_pancake':
-            self._update_cook_pancake(hands)
+            events += self._update_cook_pancake(hands)
         elif self._phase == 'stack_pancake':
-            self._update_stack_pancake(hands)
+            events += self._update_stack_pancake(hands)
         elif self._phase == 'syrup':
-            self._update_syrup(hands)
+            events += self._update_syrup(hands)
         elif self._phase == 'reveal':
             if self._reveal_t0 == 0.0:
                 self._reveal_t0 = time.time()
             elif time.time() - self._reveal_t0 > 5.0:
                 self._phase = 'complete'
-        return []
+        return events
 
     def _update_egg(self, hands):
+        events = []
         # Fail animation: yolk falling, then reset
         if self._e_fail_anim > 0:
             self._e_fail_anim -= 1
@@ -229,7 +231,7 @@ class PancakeScene(BaseMiniGame):
                 self._e_grabbed   = False
                 self._e_prev_ang  = None
                 self._e_total_ccw = 0.0
-            return
+            return events
 
         # Success animation: show briefly, then move to next egg
         if self._e_succ_anim > 0:
@@ -244,7 +246,7 @@ class PancakeScene(BaseMiniGame):
                 if all(self._e_done):
                     self._phase = 'pintro_mix'
                     self._inter_t0 = 0.0
-            return
+            return events
 
         for hand in hands:
             if not hand.detected:
@@ -307,9 +309,12 @@ class PancakeScene(BaseMiniGame):
                 self._e_gauge     = 0.0
                 self._e_succ_anim = 30
                 audio.play_success()
+                events.append('crack')
                 break
 
             break
+
+        return events
 
     # ── draw ──────────────────────────────────────────────────────────────────
 
@@ -549,6 +554,7 @@ class PancakeScene(BaseMiniGame):
         self._pc_plate_pos   = [float(_PC_PLATE_X), float(_PC_PLATE_Y)]
 
     def _update_cook_pancake(self, hands):
+        events = []
         sp = self._pc_subphase
 
         # ── Flip animation ────────────────────────────────────────────────────
@@ -564,13 +570,13 @@ class PancakeScene(BaseMiniGame):
                     self._pc_subphase = 'serve'
                 else:
                     self._pc_subphase = 'cook'
-            return
+            return events
 
         in_green = _PC_GREEN_MIN <= self._pc_gauge[self._pc_side] <= _PC_GREEN_MAX
 
         # ── Cook: flip when gauge is in green zone ────────────────────────────
         if sp == 'cook' and in_green:
-            self._handle_flip(hands)
+            events += self._handle_flip(hands)
 
         # ── Serve phase ───────────────────────────────────────────────────────
         elif sp == 'serve':
@@ -594,6 +600,7 @@ class PancakeScene(BaseMiniGame):
                 if dx*dx + dy*dy < (_PC_PAN_R * 0.85)**2:
                     self._phase    = 'pintro_deco'
                     self._inter_t0 = 0.0
+                    events.append('serve')
                 break
 
         # ── Oscillating gauge — frozen in serve ───────────────────────────────
@@ -604,6 +611,8 @@ class PancakeScene(BaseMiniGame):
                 self._pc_gauge[s] = 1.0; self._pc_gauge_dir[s] = -1
             elif self._pc_gauge[s] <= 0.0:
                 self._pc_gauge[s] = 0.0; self._pc_gauge_dir[s] = 1
+
+        return events
 
     def _handle_flip(self, hands):
         for hand in hands:
@@ -625,9 +634,10 @@ class PancakeScene(BaseMiniGame):
                     self._pc_subphase  = 'flip_anim'
                     self._pc_flip_anim = 40
                     audio.play_success()
-                    return
+                    return ['flip']
             self._pc_flip_prev_y = sy
             break
+        return []
 
     def _draw_cook_pancake(self, frame):
         t  = time.time()
@@ -795,6 +805,7 @@ class PancakeScene(BaseMiniGame):
         self._st_grip_prev  = False         # previous grip state
 
     def _update_stack_pancake(self, hands):
+        events = []
         if self._st_fail_anim > 0:
             self._st_fail_anim -= 1
         if self._st_succ_anim > 0:
@@ -830,6 +841,7 @@ class PancakeScene(BaseMiniGame):
                     self._st_stack_x.append(int(self._st_drop_x))
                     self._st_count    += 1
                     self._st_succ_anim = 22
+                    events.append('stack')
                     if self._st_count >= _ST_GOAL:
                         self._phase = 'syrup'
                         self._init_syrup()
@@ -841,6 +853,8 @@ class PancakeScene(BaseMiniGame):
                     audio.play_fail()
                 self._st_dropping  = False
                 self._st_grip_prev = False
+
+        return events
 
     def _draw_stack_pancake(self, frame):
         t  = time.time()
@@ -934,8 +948,10 @@ class PancakeScene(BaseMiniGame):
         self._sy_drawing   = False
         self._sy_prev_pos  = None
         self._sy_total_len = 0.0
+        self._sy_progress_awarded = 0   # how many quarter-progress milestones scored
 
     def _update_syrup(self, hands):
+        events = []
         for hand in hands:
             if not hand.detected:
                 if self._sy_drawing:
@@ -961,10 +977,18 @@ class PancakeScene(BaseMiniGame):
                     self._sy_prev_pos = None
             break
 
+        # Award progress points at each quarter of the syrup goal reached
+        milestone = int(min(1.0, self._sy_total_len / _SY_GOAL_LEN) * 4)
+        while self._sy_progress_awarded < milestone:
+            self._sy_progress_awarded += 1
+            events.append('drizzle')
+
         if self._sy_total_len >= _SY_GOAL_LEN:
             self._phase = 'reveal'
             self._reveal_t0 = 0.0
             audio.play_tada()
+
+        return events
 
     def _draw_syrup(self, frame):
         t = time.time()
@@ -1046,6 +1070,7 @@ class PancakeScene(BaseMiniGame):
         self._mx_fail_flash = 0           # frames of red flash (wrong color)
 
     def _update_mixer(self, hands):
+        events = []
         t = time.time()
 
         # Traffic light cycling
@@ -1087,6 +1112,7 @@ class PancakeScene(BaseMiniGame):
                 if over_bowl:
                     if self._mx_light == 'green':
                         self._mx_added += 1
+                        events.append('mix')
                         if self._mx_added >= len(_MX_INGREDIENTS):
                             self._phase = 'pintro_cook'
                             self._inter_t0 = 0.0
@@ -1096,6 +1122,8 @@ class PancakeScene(BaseMiniGame):
                 self._mx_ing_pos  = [float(_MX_ING_X), float(_MX_ING_Y)]
                 self._mx_grabbed  = False
             break
+
+        return events
 
     def _draw_mixer(self, frame):
         t  = time.time()
