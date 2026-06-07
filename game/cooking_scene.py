@@ -132,7 +132,8 @@ _TOSS_BALL_R   = 72     # ball base radius
 _TOSS_ZONE_R   = 140    # catch zone radius
 _TOSS_SPEED    = 10     # pixels per frame
 _TOSS_SWIPE_PX = 22     # screen px/frame to count as swipe
-_TOSS_TARGET   = 10     # catches needed
+_TOSS_TARGET   = 8      # catches needed
+_TOSS_READY_HOLD = 12   # frames both hands must be visible before start
 
 # ── Stage 2 – Stirring ────────────────────────────────────────────────────────
 S2_POT_X   = 640
@@ -174,6 +175,21 @@ _PHASE_HINTS = {
     'complete':         ('ALL DONE!',               (0, 255, 100)),
 }
 
+# ── Intermission "title card" screens between major stages ───────────────────
+_INTRO_DURATION = 2.4
+_INTRO_TEXT = {
+    'intro_prep':  ('Prep Time!',    'Wash and chop the ingredients'),
+    'intro_fry':   ('Frying Time!',  'Saute the onions until golden'),
+    'intro_meat':  ('Meat Time!',    'Grind, mix and shape the patty'),
+    'intro_grill': ('Grill Time!',   'Cook the steak to perfection'),
+}
+_INTRO_NEXT = {
+    'intro_prep':  'place_onion',
+    'intro_fry':   'onion_fry',
+    'intro_meat':  'meat_mix',
+    'intro_grill': 'cook_steak',
+}
+
 
 class CookingScene(BaseMiniGame):
     name        = 'Cooking!'
@@ -183,7 +199,8 @@ class CookingScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'place_onion'   # NEW entry point
+        self._phase     = 'intro_prep'   # NEW entry point (title card before prep)
+        self._inter_t0  = 0.0
         self._held_tool = None
         self._held_by   = -1
         self._reveal_t0 = 0.0
@@ -354,10 +371,13 @@ class CookingScene(BaseMiniGame):
         return 2 if self._phase == 'toss_meat' else 1
 
     # Debug shortcut: jump to any phase instantly
+    # Number keys 1-9 jump straight to these phases (only 9 slots available,
+    # so the near-identical onion prep sub-steps are trimmed down to make room
+    # for meat_mix / knead / toss_meat).
     _DEBUG_PHASES = [
-        'place_onion', 'peel_skin', 'slice_onion', 'dice_onion', 'bowl_drop',
+        'place_onion', 'dice_onion', 'bowl_drop', 'onion_fry',
+        'meat_mix', 'knead', 'toss_meat',
         'cook_steak', 'reveal',
-        'onion_fry', 'meat_mix', 'knead', 'toss_meat',
     ]
 
     def jump_to_phase(self, phase):
@@ -377,6 +397,8 @@ class CookingScene(BaseMiniGame):
             self._init_cook_steak()
         elif phase == 'reveal':
             self._reveal_t0 = 0.0
+        elif phase in _INTRO_NEXT:
+            self._inter_t0 = 0.0
 
     @property
     def progress_text(self):
@@ -424,6 +446,21 @@ class CookingScene(BaseMiniGame):
             self._trail.pop(0)
 
         p = self._phase
+
+        if p in _INTRO_NEXT:
+            if self._inter_t0 == 0.0:
+                self._inter_t0 = time.time()
+            elif time.time() - self._inter_t0 > _INTRO_DURATION:
+                nxt = _INTRO_NEXT[p]
+                self._inter_t0 = 0.0
+                self._phase    = nxt
+                if nxt == 'onion_fry':
+                    self._init_onion()
+                elif nxt == 'meat_mix':
+                    self._init_meat_mix()
+                elif nxt == 'cook_steak':
+                    self._init_cook_steak()
+            return events
 
         # ── New Stage 1 ───────────────────────────────────────────────────────
         if p == 'place_onion':
@@ -695,7 +732,10 @@ class CookingScene(BaseMiniGame):
         _draw_counter(frame, w, h)
 
         p = self._phase
-        if p in ('place_onion', 'peel_skin', 'slice_onion', 'dice_onion', 'bowl_drop'):
+        if p in _INTRO_NEXT:
+            self._draw_intermission(frame)
+            return frame
+        elif p in ('place_onion', 'peel_skin', 'slice_onion', 'dice_onion', 'bowl_drop'):
             self._draw_onion_cut(frame)
         # elif p in ('grab_knife', 'chopping', 'pepper_splitting'):  # old stage 1
         #     self._draw_stage1(frame)
@@ -706,7 +746,7 @@ class CookingScene(BaseMiniGame):
         elif p == 'knead':
             self._draw_knead(frame)
         elif p == 'toss_meat':
-            self._draw_toss_meat(frame)
+            self._draw_toss_meat(frame, hands)
         elif p == 'cook_steak':
             self._draw_cook_steak(frame)
         elif p == 'reveal':
@@ -1056,8 +1096,8 @@ class CookingScene(BaseMiniGame):
                 bdy = hy - _FLAME_BTN_CY
                 if bdx * bdx + bdy * bdy < (_FLAME_BTN_R + 22) ** 2:
                     self._flame_on = False
-                    self._phase    = 'meat_mix'
-                    self._init_meat_mix()
+                    self._phase    = 'intro_meat'
+                    self._inter_t0 = 0.0
                     return
 
             # Pick up spatula
@@ -1463,6 +1503,8 @@ class CookingScene(BaseMiniGame):
     # ── Toss Meat ────────────────────────────────────────────────────────────
 
     def _init_toss_meat(self):
+        self._toss_started     = False
+        self._toss_ready_hold  = 0
         self._toss_ball_x      = float(_TOSS_L_X)
         self._toss_ball_vx     = 0.0
         self._toss_moving      = False
@@ -1475,6 +1517,17 @@ class CookingScene(BaseMiniGame):
         self._toss_arrive_time = time.time()          # when ball last stopped
 
     def _do_toss_meat(self, hands):
+        # Wait for both hands to be visible before the throwing actually starts
+        if not self._toss_started:
+            if sum(1 for h in hands if h.detected) >= 2:
+                self._toss_ready_hold += 1
+                if self._toss_ready_hold >= _TOSS_READY_HOLD:
+                    self._toss_started     = True
+                    self._toss_arrive_time = time.time()
+            else:
+                self._toss_ready_hold = 0
+            return []
+
         if self._toss_catch_cd > 0:
             self._toss_catch_cd -= 1
         if self._toss_anim > 0:
@@ -1540,8 +1593,8 @@ class CookingScene(BaseMiniGame):
                     self._toss_catch_cd = 22
                     self._flash_event('THROW!', (80, 230, 120), 10)
                     if self._toss_count >= _TOSS_TARGET:
-                        self._phase = 'cook_steak'
-                        self._init_cook_steak()
+                        self._phase    = 'intro_grill'
+                        self._inter_t0 = 0.0
                         return ['toss']
                     break
         else:
@@ -1551,9 +1604,26 @@ class CookingScene(BaseMiniGame):
 
         return []
 
-    def _draw_toss_meat(self, frame):
+    def _draw_toss_meat(self, frame, hands=None):
         t  = time.time()
         fh, fw = frame.shape[:2]
+
+        if not self._toss_started:
+            _panel(frame, 0, 0, fw, fh, alpha=0.55)
+            _shadow_text(frame, 'This needs BOTH HANDS!',
+                         fw // 2, fh // 2 - 70, 1.0, (255, 230, 100), 2, center=True)
+            _shadow_text(frame, 'Show both hands to the camera to start',
+                         fw // 2, fh // 2 - 28, 0.7, (220, 220, 240), 1, center=True)
+            n_detected = sum(1 for h in (hands or []) if h.detected)
+            bar_x0, bar_y0, bar_w_max = fw // 2 - 120, fh // 2 + 6, 240
+            bar_w = int(bar_w_max * min(1.0, self._toss_ready_hold / _TOSS_READY_HOLD))
+            cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x0 + bar_w, bar_y0 + 20),
+                          (80, 230, 120), -1)
+            cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x0 + bar_w_max, bar_y0 + 20),
+                          (200, 200, 210), 2)
+            _shadow_text(frame, f'Hands detected: {n_detected} / 2',
+                         fw // 2, fh // 2 + 60, 0.6, (200, 220, 255), 1, center=True)
+            return
 
         ball_at_left  = self._toss_ball_x <= _TOSS_L_X + 10
         ball_at_right = self._toss_ball_x >= _TOSS_R_X - 10
@@ -2576,8 +2646,8 @@ class CookingScene(BaseMiniGame):
         n_in = sum(self._bd_in_bowl)
         if n_in >= _BOWL_PIECE_GOAL:
             self._flash_event('DONE!', (255, 200, 50), 22)
-            self._phase = 'onion_fry'
-            self._init_onion()
+            self._phase    = 'intro_fry'
+            self._inter_t0 = 0.0
             return ['grab']
         return []
 
@@ -2861,6 +2931,30 @@ class CookingScene(BaseMiniGame):
         _shadow_text(frame, text + count_str, w // 2, 116, 0.9, color, 2, center=True)
 
 
+    def _draw_intermission(self, frame):
+        from .game_manager import _draw_cooking_papa
+        h, w = frame.shape[:2]
+        _panel(frame, 0, 0, w, h, color=(20, 18, 16), alpha=0.62)
+
+        title, sub = _INTRO_TEXT.get(self._phase, ('', ''))
+        _draw_cooking_papa(frame, w // 4, h // 2 + 20, size=150)
+
+        tcx = w * 9 // 16
+        _shadow_text(frame, title, tcx, h // 2 - 26,
+                     1.55, (80, 220, 255), 3, center=True)
+        _shadow_text(frame, sub, tcx, h // 2 + 28,
+                     0.68, (225, 225, 240), 1, center=True)
+
+        # Progress dots show the title card's countdown
+        n_dots = 5
+        elapsed = 0.0 if self._inter_t0 == 0.0 else time.time() - self._inter_t0
+        filled = int(n_dots * min(1.0, elapsed / _INTRO_DURATION))
+        for di in range(n_dots):
+            dx = tcx - (n_dots - 1) * 16 + di * 32
+            dc = (80, 220, 160) if di < filled else (90, 90, 100)
+            cv2.circle(frame, (dx, h // 2 + 78), 7, dc, -1)
+            cv2.circle(frame, (dx, h // 2 + 78), 7, (200, 205, 215), 1)
+
     def _draw_reveal(self, frame):
         from .ui import draw_reveal_burst
         h, w = frame.shape[:2]
@@ -2945,6 +3039,8 @@ class CookingScene(BaseMiniGame):
         cv2.circle(frame, (lx, ly), lr, (0, 155, 190), 4)
 
         # ── Title text ────────────────────────────────────────────────────────
+        _shadow_text(frame, 'Good Job!', cx, cy - 268,
+                     1.0, (255, 255, 255), 2, center=True)
         _shadow_text(frame, 'Salisbury Steak!', cx, cy - 210,
                      1.4, (30, 190, 255), 3, center=True)
 

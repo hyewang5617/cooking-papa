@@ -1208,5 +1208,7 @@ class PancakeScene(BaseMiniGame):
             cv2.circle(frame, (spx, spy), _rnd.randint(1, 3), (22, 58, 105), -1)
 
         # ── Title text ────────────────────────────────────────────────────────
+        _shadow_text(frame, 'Good Job!', cx, cy - 288,
+                     1.0, (255, 255, 255), 2, center=True)
         _shadow_text(frame, 'Pancakes!', cx, cy - 230,
                      1.4, (30, 190, 255), 3, center=True)
