@@ -2,6 +2,8 @@
 
 웹캠과 손 동작만으로 즐기는 AR 요리 게임입니다. 키보드나 마우스 없이, 카메라 앞에서 손을 쥐었다 펴는 동작만으로 재료를 자르고, 섞고, 뒤집고, 플레이팅까지 합니다.
 
+**직접 플레이 해보시는 것을 추천드립니다.**
+
 [![Cooking Papa 데모 영상](https://img.youtube.com/vi/rqzNLpTx-Jo/hqdefault.jpg)](https://youtu.be/rqzNLpTx-Jo)
 
 > 🎬 위 썸네일을 클릭하면 데모 영상(https://youtu.be/rqzNLpTx-Jo)으로 이동합니다.
