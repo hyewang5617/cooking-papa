@@ -277,7 +277,8 @@ class PancakeScene(BaseMiniGame):
         if self._phase == 'syrup':
             return self._draw_syrup(frame)
         if self._phase == 'reveal':
-            return self._draw_reveal(frame)
+            self._draw_reveal(frame)
+            return frame
 
         # ── Bowl ──────────────────────────────────────────────────────────────
         bcx, bcy = _E_BOWL_CX, _E_BOWL_CY
