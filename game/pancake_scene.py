@@ -11,7 +11,7 @@ _MX_CY       = 360
 _MX_BOWL_RX  = 195
 _MX_BOWL_RY  = 155
 _MX_LIGHT_INTERVAL = 1.5    # seconds between light changes
-_MX_GRAB_R   = 70
+_MX_GRAB_R   = 140
 _MX_INGREDIENTS = [
     'Flour', 'Milk', 'Sugar',
     'Baking Powder', 'Butter', 'Meringue',
@@ -178,6 +178,14 @@ class PancakeScene(BaseMiniGame):
     def update(self, hands):
         if not self.timer_started:
             self._begin_timer()
+
+        audio.loop_cooking(self._phase == 'cook_pancake')
+        if self._phase == 'mixer':
+            _whisk_speed = {'green': 1.0, 'orange': 1.5, 'red': 2.0}.get(self._mx_light, 1.0)
+            audio.loop_whisk(True, speed=_whisk_speed)
+        else:
+            audio.loop_whisk(False)
+        audio.loop_syrup(self._phase == 'syrup' and self._sy_drawing)
 
         if self._phase in _PINTRO_NEXT:
             if self._inter_t0 == 0.0:
@@ -956,6 +964,7 @@ class PancakeScene(BaseMiniGame):
         if self._sy_total_len >= _SY_GOAL_LEN:
             self._phase = 'reveal'
             self._reveal_t0 = 0.0
+            audio.play_tada()
 
     def _draw_syrup(self, frame):
         t = time.time()
@@ -1188,20 +1197,20 @@ class PancakeScene(BaseMiniGame):
             ix = int(self._mx_ing_pos[0])
             iy = int(self._mx_ing_pos[1])
 
-            # Draw ingredient as a labeled rounded rectangle
-            cv2.rectangle(frame, (ix-50+3, iy-38+3), (ix+50+3, iy+38+3), (18,16,14), -1)
-            cv2.rectangle(frame, (ix-50, iy-38), (ix+50, iy+38), ing_col, -1)
-            cv2.rectangle(frame, (ix-50, iy-38), (ix+50, iy+38),
+            # Draw ingredient as a labeled rounded rectangle (2x size)
+            cv2.rectangle(frame, (ix-100+6, iy-76+6), (ix+100+6, iy+76+6), (18,16,14), -1)
+            cv2.rectangle(frame, (ix-100, iy-76), (ix+100, iy+76), ing_col, -1)
+            cv2.rectangle(frame, (ix-100, iy-76), (ix+100, iy+76),
                           tuple(max(0,c-40) for c in ing_col), 3)
-            _shadow_text(frame, ing_name, ix, iy-10, 0.50,
+            _shadow_text(frame, ing_name, ix, iy-10, 0.75,
                          (30,30,30), 1, center=True)
 
             # Grab ring if not grabbed
             if not self._mx_grabbed:
-                ring_r = int(52 + 8*abs(math.sin(t*5)))
+                ring_r = int(104 + 16*abs(math.sin(t*5)))
                 cv2.circle(frame, (ix, iy), ring_r, (0,200,255), 2, cv2.LINE_AA)
                 _shadow_text(frame, 'GRAB', ix, iy - ring_r - 12,
-                             0.55, (0,200,255), 1, center=True)
+                             0.825, (0,200,255), 1, center=True)
 
         # ── Progress + HUD ────────────────────────────────────────────────────
         _mx_lbl = f'{self._mx_added} / {len(_MX_INGREDIENTS)}  added'

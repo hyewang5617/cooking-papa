@@ -1,5 +1,6 @@
 import cv2
 import sys
+from game import audio
 from game.game_manager import GameManager
 
 
@@ -28,6 +29,7 @@ def main():
         print("Error: Cannot open webcam. Make sure no other app is using it.")
         sys.exit(1)
 
+    audio.start_bgm()
     game = GameManager()
     WIN = 'AR Cooking Mama'
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)

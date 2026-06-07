@@ -448,6 +448,10 @@ class CookingScene(BaseMiniGame):
 
         p = self._phase
 
+        audio.loop_cooking(p == 'cook_steak')
+        audio.loop_mixing(p == 'meat_mix' and self._meat_handle_grabbed)
+        audio.loop_knife(p == 'dice_onion' and self._dice_knife_hand != -1)
+
         if p in _INTRO_NEXT:
             if self._inter_t0 == 0.0:
                 self._inter_t0 = time.time()
@@ -729,6 +733,8 @@ class CookingScene(BaseMiniGame):
             audio.play_grab()
         elif label == 'DONE!':
             audio.play_stage_clear()
+        elif label in ('PEEL!', 'SLICE!', 'DICE!'):
+            pass   # 칼질 동안에는 칼질효과음(파일) 루프가 재생되므로 합성음은 생략
         else:
             audio.play_success()
 
@@ -1735,6 +1741,7 @@ class CookingScene(BaseMiniGame):
                 if self._sk_idx >= _SK_ACTION_N:
                     self._phase = 'reveal'
                     self._reveal_t0 = 0.0
+                    audio.play_tada()
             return
 
         if self._sk_idx >= _SK_ACTION_N:
@@ -1760,6 +1767,7 @@ class CookingScene(BaseMiniGame):
             if self._sk_idx >= _SK_ACTION_N:
                 self._phase = 'reveal'
                 self._reveal_t0 = 0.0
+                audio.play_tada()
             else:
                 self._flash_event('NICE!', (80, 220, 160), 12)
 
