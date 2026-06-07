@@ -9,6 +9,7 @@ import math
 import time
 import numpy as np
 
+from . import audio
 from .minigames.base import BaseMiniGame
 from .sprites import (get_knife, get_spatula, get_bowl, overlay,
                       get_carrot_whole,   get_carrot_half_left,   get_carrot_half_right,
@@ -194,7 +195,7 @@ _INTRO_NEXT = {
 class CookingScene(BaseMiniGame):
     name        = 'Cooking!'
     instruction = 'Grab tools and cook the meal!'
-    duration    = 120.0
+    duration    = 180.0
     grab_phase  = True
 
     def __init__(self):
@@ -724,6 +725,12 @@ class CookingScene(BaseMiniGame):
         self._flash     = frames
         self._flash_lbl = label
         self._flash_col = color
+        if label == 'GRAB!':
+            audio.play_grab()
+        elif label == 'DONE!':
+            audio.play_stage_clear()
+        else:
+            audio.play_success()
 
     # ── Drawing: one stage at a time ─────────────────────────────────────────
 
@@ -1727,6 +1734,7 @@ class CookingScene(BaseMiniGame):
                 self._flash_event('NICE!', (80, 220, 160), 12)
                 if self._sk_idx >= _SK_ACTION_N:
                     self._phase = 'reveal'
+                    self._reveal_t0 = 0.0
             return
 
         if self._sk_idx >= _SK_ACTION_N:
@@ -1751,6 +1759,7 @@ class CookingScene(BaseMiniGame):
             self._sk_steak_x_off  = 0.0
             if self._sk_idx >= _SK_ACTION_N:
                 self._phase = 'reveal'
+                self._reveal_t0 = 0.0
             else:
                 self._flash_event('NICE!', (80, 220, 160), 12)
 

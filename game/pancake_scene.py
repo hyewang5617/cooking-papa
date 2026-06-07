@@ -2,6 +2,7 @@ import cv2
 import math
 import time
 import numpy as np
+from . import audio
 from .minigames.base import BaseMiniGame
 
 # ── Mixer constants ───────────────────────────────────────────────────────────
@@ -114,7 +115,7 @@ _PINTRO_NEXT = {
 class PancakeScene(BaseMiniGame):
     name        = 'Pancakes'
     instruction = 'Make pancakes!'
-    duration    = 180.0
+    duration    = 130.0
     grab_phase  = True
 
     _DEBUG_PHASES = ['egg_separate', 'mixer', 'cook_pancake', 'stack_pancake', 'syrup', 'reveal']
@@ -276,6 +277,7 @@ class PancakeScene(BaseMiniGame):
             if self._e_total_ccw >= _E_FAIL_ROT:
                 self._e_gauge     = 0.0
                 self._e_fail_anim = 40
+                audio.play_fail()
                 self._e_grabbed   = False
                 self._e_prev_ang  = None
                 self._e_total_ccw = 0.0
@@ -294,6 +296,7 @@ class PancakeScene(BaseMiniGame):
                 self._e_white_in_bowl = min(1.0, self._e_white_in_bowl + 0.5)
                 self._e_gauge     = 0.0
                 self._e_succ_anim = 30
+                audio.play_success()
                 break
 
             break
@@ -611,6 +614,7 @@ class PancakeScene(BaseMiniGame):
                 if self._pc_flip_prev_y - sy >= _PC_FLIP_PX:
                     self._pc_subphase  = 'flip_anim'
                     self._pc_flip_anim = 40
+                    audio.play_success()
                     return
             self._pc_flip_prev_y = sy
             break
@@ -821,8 +825,12 @@ class PancakeScene(BaseMiniGame):
                     if self._st_count >= _ST_GOAL:
                         self._phase = 'pintro_deco'
                         self._inter_t0 = 0.0
+                        audio.play_stage_clear()
+                    else:
+                        audio.play_success()
                 else:
                     self._st_fail_anim = 30
+                    audio.play_fail()
                 self._st_dropping  = False
                 self._st_grip_prev = False
 
@@ -947,6 +955,7 @@ class PancakeScene(BaseMiniGame):
 
         if self._sy_total_len >= _SY_GOAL_LEN:
             self._phase = 'reveal'
+            self._reveal_t0 = 0.0
 
     def _draw_syrup(self, frame):
         t = time.time()
