@@ -119,7 +119,7 @@ _SK_ACTION_N    = 6
 _SK_ACTIONS     = ('shake', 'press', 'flip', 'flame')
 _SK_PRESS_HOLD  = 30    # frames to hold for press
 _SK_SPAT_REST   = (_SK_PAN_CX + _SK_PAN_R + 80, _SK_PAN_CY - 70)  # spatula rest spot
-_SK_SPAT_TIP_OFF = 110  # distance from gripped point to paddle tip (top of spatula)
+_SK_SPAT_TIP_OFF = 150  # distance from gripped point to paddle tip (top of spatula)
 _SK_SHAKE_PX    = 55    # px per shake stroke
 _SK_SHAKE_N     = 3     # strokes needed for shake
 _SK_FLIP_PX     = 70    # px upward flick
@@ -1897,15 +1897,27 @@ class CookingScene(BaseMiniGame):
             _shadow_text(frame, 'GRAB!', _SK_FLAME_CX, _SK_FLAME_CY-ring_r-12,
                          0.6, (0,200,255), 1, center=True)
 
-        # ── Action instruction + tutorial ─────────────────────────────────────
-        _panel(frame, 0, 0, fw, 52)
+        # ── Action instruction (right-center, clear of the top HUD bar) ───────
         if self._sk_idx < _SK_ACTION_N:
-            labels = {'shake':'Grab handle → Shake UP & DOWN  x3',
-                      'press':'Grab the spatula → Hold it over the steak',
-                      'flip': 'Grab handle → Flick UP sharply',
-                      'flame':'Grip the FLAME button'}
-            _shadow_text(frame, labels.get(act,''), int(fw * 0.70), 30,
-                         0.75, (80, 220, 255), 1, center=True)
+            labels = {'shake':'Grab handle,',
+                      'press':'Grab the spatula,',
+                      'flip': 'Grab handle,',
+                      'flame':'Grip the'}
+            labels2 = {'shake':'Shake UP & DOWN  x3',
+                       'press':'hold it over the steak',
+                       'flip': 'Flick UP sharply',
+                       'flame':'FLAME button'}
+            l1, l2 = labels.get(act, ''), labels2.get(act, '')
+            scale = 0.62
+            (tw1, th), _ = cv2.getTextSize(l1, cv2.FONT_HERSHEY_DUPLEX, scale, 1)
+            (tw2, _),  _ = cv2.getTextSize(l2, cv2.FONT_HERSHEY_DUPLEX, scale, 1)
+            box_w = max(tw1, tw2) + 36
+            box_h = th * 2 + 34
+            tx = fw - 26 - box_w
+            ty = fh // 2 - box_h // 2
+            _panel(frame, tx, ty, box_w, box_h)
+            _shadow_text(frame, l1, tx + 18, ty + th + 8,  scale, (80, 220, 255), 1)
+            _shadow_text(frame, l2, tx + 18, ty + th*2 + 24, scale, (80, 220, 255), 1)
 
         # Demo arrow per action
         if act == 'shake' and not self._sk_pan_grabbed:
@@ -1917,13 +1929,22 @@ class CookingScene(BaseMiniGame):
                 cv2.arrowedLine(frame, (cx-200, ay), (cx-200, ay+50),
                                 (80,220,255), 2, tipLength=0.4)
         elif act == 'press':
+            # Blinking target ring over the steak — shows where to bring the spatula tip
+            blink   = 0.5 + 0.5 * math.sin(t * 6.0)
+            ring_r  = int(_SK_AREA_R * 0.78 + 6 * blink)
+            ring_th = 2 + int(2 * blink)
+            cv2.circle(frame, (cx, cy - 10), ring_r, (80, 220, 255), ring_th, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy - 10), ring_r + 14, (80, 220, 255), 1, cv2.LINE_AA)
+            _shadow_text(frame, 'TARGET', cx, cy - 10 - ring_r - 16,
+                         0.55, (80, 220, 255), 1, center=True)
+
             sx, sy = self._sk_spat_pos
             _draw_spatula(frame, sx, sy)
             if self._sk_spat_hand == -1:
                 _grab_ring(frame, (sx, sy))
             else:
-                _shadow_text(frame, 'HOLD over the steak', cx, cy - _SK_AREA_R - 28,
-                             0.6, (80,220,255), 1, center=True)
+                _shadow_text(frame, 'Bring the spatula tip into the ring!', cx, cy - _SK_AREA_R - 34,
+                             0.55, (80,220,255), 1, center=True)
         elif act == 'flip' and self._sk_pan_grabbed and self._sk_flip_anim == 0:
             cv2.arrowedLine(frame, (cx-180, cy+60), (cx-180, cy-60),
                             (80,220,255), 3, tipLength=0.3)
@@ -2978,29 +2999,55 @@ def _draw_dir_arrow(frame, cx, cy, direction, size=65, color=(80, 220, 255)):
 
 
 def _draw_spatula(frame, cx, cy):
-    """Draw a wooden spatula centered at (cx, cy), pointing upward."""
+    """Draw a slotted turner (black plastic + steel neck) centered at (cx, cy), pointing upward."""
     cx, cy = int(cx), int(cy)
-    # Handle (dark wood brown rectangle)
-    hw, hh = 10, 70
-    cv2.rectangle(frame, (cx - hw, cy - hh), (cx + hw, cy + hh),
-                  (25, 80, 130), -1)
-    cv2.rectangle(frame, (cx - hw, cy - hh), (cx + hw, cy + hh),
-                  (15, 55, 90), 2)
-    # Wood grain lines on handle
-    for gy in range(cy - hh + 8, cy + hh, 14):
-        cv2.line(frame, (cx - hw + 2, gy), (cx + hw - 2, gy), (35, 100, 155), 1)
-    # Paddle head (wider, rounded rectangle)
-    pw, ph = 30, 40
-    cv2.rectangle(frame, (cx - pw, cy - hh - ph), (cx + pw, cy - hh + 8),
-                  (25, 80, 130), -1)
-    cv2.rectangle(frame, (cx - pw, cy - hh - ph), (cx + pw, cy - hh + 8),
-                  (15, 55, 90), 2)
-    # Holes in paddle (classic spatula look)
-    for hy_off in (-ph // 2 - 4, -ph // 4 - 2):
-        cv2.circle(frame, (cx, cy - hh + hy_off), 5, (15, 55, 90), -1)
-    # Grip band at top of handle
-    cv2.rectangle(frame, (cx - hw - 2, cy - hh - 6), (cx + hw + 2, cy - hh + 6),
-                  (18, 60, 100), -1)
+    PLASTIC    = (42, 36, 32)     # near-black plastic (BGR)
+    PLASTIC_HI = (74, 64, 58)
+    PLASTIC_DK = (22, 18, 16)
+    STEEL      = (212, 212, 216)
+    STEEL_DK   = (150, 150, 156)
+
+    # Handle (bottom): dark plastic body tapering toward the butt, with a hang-hole
+    hw, hh = 12, 72
+    hx0, hy0 = cx - hw, cy - hh
+    hx1, hy1 = cx + hw, cy + hh
+    pts_h = np.array([
+        [hx0 + 3, hy0], [hx1 - 3, hy0],
+        [hx1,     hy1 - 18], [cx + hw - 2, hy1],
+        [cx - hw + 2, hy1], [hx0,         hy1 - 18],
+    ], np.int32)
+    cv2.fillPoly(frame, [pts_h], PLASTIC)
+    cv2.polylines(frame, [pts_h], True, PLASTIC_DK, 2)
+    cv2.line(frame, (hx0 + 4, hy0 + 8), (hx0 + 4, hy1 - 22), PLASTIC_HI, 2)
+    cv2.ellipse(frame, (cx, hy1 - 15), (6, 11), 0, 0, 360, (250, 250, 250), -1)
+    cv2.ellipse(frame, (cx, hy1 - 15), (6, 11), 0, 0, 360, PLASTIC_DK, 2)
+
+    # Steel neck connecting handle to paddle
+    nw, nh = 6, 22
+    cv2.rectangle(frame, (cx - nw, hy0 - nh), (cx + nw, hy0 + 6), STEEL, -1)
+    cv2.rectangle(frame, (cx - nw, hy0 - nh), (cx + nw, hy0 + 6), STEEL_DK, 1)
+    cv2.line(frame, (cx - 2, hy0 - nh + 2), (cx - 2, hy0 + 4), STEEL_DK, 1)
+    cv2.line(frame, (cx + 2, hy0 - nh + 2), (cx + 2, hy0 + 4), (236, 236, 240), 1)
+
+    # Paddle head: wide flat slotted blade with one chamfered corner
+    pw, ph = 36, 56
+    py1 = hy0 - nh
+    py0 = py1 - ph
+    pts_p = np.array([
+        [cx - pw,      py1], [cx - pw,      py0 + 12],
+        [cx - pw + 14, py0], [cx + pw,      py0],
+        [cx + pw,      py1],
+    ], np.int32)
+    cv2.fillPoly(frame, [pts_p], PLASTIC)
+    cv2.polylines(frame, [pts_p], True, PLASTIC_DK, 2)
+    cv2.line(frame, (cx - pw + 5, py0 + 18), (cx - pw + 5, py1 - 6), PLASTIC_HI, 2)
+    # Long slots cut through the blade
+    n_slots, slot_w = 5, 5
+    span = (pw * 2) - 24
+    step = span / n_slots
+    for k in range(n_slots):
+        sx = cx - pw + 12 + int(k * step + step * 0.5) - slot_w // 2
+        cv2.rectangle(frame, (sx, py0 + 14), (sx + slot_w, py1 - 7), (244, 244, 246), -1)
 
 
 def _demo_fist(frame, cx, cy, size=58, openness=0.0):
