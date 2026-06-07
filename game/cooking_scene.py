@@ -1678,10 +1678,11 @@ class CookingScene(BaseMiniGame):
             _shadow_text(frame, lbl, bx, ball_y - semi_b - 28,
                          0.65, (255, 220, 80), 1, center=True)
 
-        # ── Instruction banner ────────────────────────────────────────────────
-        _panel(frame, 0, 0, fw, 48)
-        _shadow_text(frame, 'Move hand toward the OTHER side to throw!',
-                     fw // 2, 28, 0.70, (220, 220, 240), 1, center=True)
+        # ── Instruction banner (right side, clear of the top HUD) ─────────────
+        _toss_instr = 'Move hand toward the OTHER side to throw!'
+        _ti_w = cv2.getTextSize(_toss_instr, cv2.FONT_HERSHEY_DUPLEX, 0.70, 1)[0][0]
+        _panel(frame, fw - 42 - _ti_w, 84, _ti_w + 32, 36)
+        _shadow_text(frame, _toss_instr, fw - 26 - _ti_w, 108, 0.70, (220, 220, 240), 1)
         _shadow_text(frame, f'Throw: {self._toss_count} / {_TOSS_TARGET}',
                      fw // 2, fh - 35, 1.0, (255, 230, 100), 2, center=True)
 

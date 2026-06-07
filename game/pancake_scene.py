@@ -95,6 +95,22 @@ def _rot(px, py, cx, cy, a):
             int(cy + dx*math.sin(a) + dy*math.cos(a)))
 
 
+# ── Intermission "title card" screens between major stages ───────────────────
+_PINTRO_DURATION = 2.4
+_PINTRO_TEXT = {
+    'pintro_egg':  ('Yolk Time!',     'Crack the eggs and separate the yolks'),
+    'pintro_mix':  ('Mixing Time!',   'Combine the batter ingredients'),
+    'pintro_cook': ('Cooking Time!',  'Pour the batter and flip the pancakes'),
+    'pintro_deco': ('Decorate Time!', 'Add butter and drizzle the syrup'),
+}
+_PINTRO_NEXT = {
+    'pintro_egg':  'egg_separate',
+    'pintro_mix':  'mixer',
+    'pintro_cook': 'cook_pancake',
+    'pintro_deco': 'syrup',
+}
+
+
 class PancakeScene(BaseMiniGame):
     name        = 'Pancakes'
     instruction = 'Make pancakes!'
@@ -105,8 +121,9 @@ class PancakeScene(BaseMiniGame):
 
     def __init__(self):
         super().__init__()
-        self._phase     = 'egg_separate'
+        self._phase     = 'pintro_egg'
         self._reveal_t0 = 0.0
+        self._inter_t0  = 0.0
         self._init_egg()
         self._init_mixer()
         self._init_cook_pancake()
@@ -126,6 +143,8 @@ class PancakeScene(BaseMiniGame):
             self._init_syrup()
         elif phase == 'reveal':
             self._reveal_t0 = 0.0
+        elif phase in _PINTRO_NEXT:
+            self._inter_t0 = 0.0
 
     def _init_egg(self):
         self._e_current   = 0
@@ -158,6 +177,22 @@ class PancakeScene(BaseMiniGame):
     def update(self, hands):
         if not self.timer_started:
             self._begin_timer()
+
+        if self._phase in _PINTRO_NEXT:
+            if self._inter_t0 == 0.0:
+                self._inter_t0 = time.time()
+            elif time.time() - self._inter_t0 > _PINTRO_DURATION:
+                nxt = _PINTRO_NEXT[self._phase]
+                self._inter_t0 = 0.0
+                self._phase    = nxt
+                if nxt == 'mixer':
+                    self._init_mixer()
+                elif nxt == 'cook_pancake':
+                    self._init_cook_pancake()
+                elif nxt == 'syrup':
+                    self._init_syrup()
+            return []
+
         if self._phase == 'egg_separate':
             self._update_egg(hands)
         elif self._phase == 'mixer':
@@ -196,8 +231,8 @@ class PancakeScene(BaseMiniGame):
                 self._e_prev_ang  = None
                 self._e_total_ccw = 0.0
                 if all(self._e_done):
-                    self._phase = 'mixer'
-                    self._init_mixer()
+                    self._phase = 'pintro_mix'
+                    self._inter_t0 = 0.0
             return
 
         for hand in hands:
@@ -268,6 +303,9 @@ class PancakeScene(BaseMiniGame):
     def draw(self, frame, hands):
         t  = time.time()
         h, w = frame.shape[:2]
+        if self._phase in _PINTRO_NEXT:
+            self._draw_intermission(frame)
+            return frame
         if self._phase == 'mixer':
             return self._draw_mixer(frame)
         if self._phase == 'cook_pancake':
@@ -378,8 +416,9 @@ class PancakeScene(BaseMiniGame):
                                  0.85, dcol, 2, center=True)
 
         # ── HUD ───────────────────────────────────────────────────────────────
-        _shadow_text(frame, f'Eggs: {sum(self._e_done)} / {_E_EGGS}',
-                     w//2, 55, 1.0, (255, 230, 100), 2, center=True)
+        _eg_lbl = f'Eggs: {sum(self._e_done)} / {_E_EGGS}'
+        _eg_w   = cv2.getTextSize(_eg_lbl, cv2.FONT_HERSHEY_DUPLEX, 1.0, 2)[0][0]
+        _shadow_text(frame, _eg_lbl, w - 26 - _eg_w, 100, 1.0, (255, 230, 100), 2)
         if not self._e_grabbed and self._e_fail_anim == 0 and self._e_succ_anim == 0:
             _shadow_text(frame, 'Grip then rotate  COUNTER-CLOCKWISE  slowly',
                          w//2, h-35, 0.60, (200, 210, 230), 1, center=True)
@@ -780,8 +819,8 @@ class PancakeScene(BaseMiniGame):
                     self._st_count    += 1
                     self._st_succ_anim = 22
                     if self._st_count >= _ST_GOAL:
-                        self._phase = 'syrup'
-                        self._init_syrup()
+                        self._phase = 'pintro_deco'
+                        self._inter_t0 = 0.0
                 else:
                     self._st_fail_anim = 30
                 self._st_dropping  = False
@@ -865,8 +904,9 @@ class PancakeScene(BaseMiniGame):
                          1.2, (50,230,80), 3, center=True)
 
         # ── HUD ───────────────────────────────────────────────────────────────
-        _shadow_text(frame, f'{self._st_count} / {_ST_GOAL}  stacked',
-                     w//2, 45, 0.90, (255,230,100), 2, center=True)
+        _st_lbl = f'{self._st_count} / {_ST_GOAL}  stacked'
+        _st_w   = cv2.getTextSize(_st_lbl, cv2.FONT_HERSHEY_DUPLEX, 0.90, 2)[0][0]
+        _shadow_text(frame, _st_lbl, w - 26 - _st_w, 100, 0.90, (255,230,100), 2)
         _shadow_text(frame, 'GRIP to drop!  Aim for the GREEN circle',
                      w//2, h-32, 0.60, (200,210,228), 1, center=True)
         return frame
@@ -1030,8 +1070,8 @@ class PancakeScene(BaseMiniGame):
                     if self._mx_light == 'green':
                         self._mx_added += 1
                         if self._mx_added >= len(_MX_INGREDIENTS):
-                            self._phase = 'cook_pancake'
-                            self._init_cook_pancake()
+                            self._phase = 'pintro_cook'
+                            self._inter_t0 = 0.0
                     else:
                         self._mx_fail_flash = 18
                 # Reset ingredient position
@@ -1155,11 +1195,38 @@ class PancakeScene(BaseMiniGame):
                              0.55, (0,200,255), 1, center=True)
 
         # ── Progress + HUD ────────────────────────────────────────────────────
-        _shadow_text(frame, f'{self._mx_added} / {len(_MX_INGREDIENTS)}  added',
-                     w//2, 45, 0.85, (255, 230, 100), 2, center=True)
+        _mx_lbl = f'{self._mx_added} / {len(_MX_INGREDIENTS)}  added'
+        _mx_w   = cv2.getTextSize(_mx_lbl, cv2.FONT_HERSHEY_DUPLEX, 0.85, 2)[0][0]
+        _shadow_text(frame, _mx_lbl, w - 26 - _mx_w, 100, 0.85, (255, 230, 100), 2)
         _shadow_text(frame, 'Add ingredients only when GREEN',
                      w//2, h-32, 0.58, (190, 200, 215), 1, center=True)
         return frame
+
+    def _draw_intermission(self, frame):
+        from .game_manager import _draw_cooking_papa
+        h, w = frame.shape[:2]
+
+        overlay = np.zeros_like(frame)
+        overlay[:] = (20, 18, 16)
+        cv2.addWeighted(overlay, 0.62, frame, 0.38, 0, frame)
+
+        title, sub = _PINTRO_TEXT.get(self._phase, ('', ''))
+        _draw_cooking_papa(frame, w // 4, h // 2 + 20, size=150)
+
+        tcx = w * 9 // 16
+        _shadow_text(frame, title, tcx, h // 2 - 26,
+                     1.55, (80, 220, 255), 3, center=True)
+        _shadow_text(frame, sub, tcx, h // 2 + 28,
+                     0.68, (225, 225, 240), 1, center=True)
+
+        n_dots = 5
+        elapsed = 0.0 if self._inter_t0 == 0.0 else time.time() - self._inter_t0
+        filled  = int(n_dots * min(1.0, elapsed / _PINTRO_DURATION))
+        for di in range(n_dots):
+            dx = tcx - (n_dots - 1) * 16 + di * 32
+            dc = (80, 220, 160) if di < filled else (90, 90, 100)
+            cv2.circle(frame, (dx, h // 2 + 78), 7, dc, -1)
+            cv2.circle(frame, (dx, h // 2 + 78), 7, (200, 205, 215), 1)
 
     def _draw_reveal(self, frame):
         from .ui import draw_reveal_burst
