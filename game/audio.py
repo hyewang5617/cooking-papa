@@ -118,12 +118,6 @@ def play_stage_clear():
     ])
 
 
-def play_tick():
-    _play('tick', [
-        (880.0, 0.05, 'square', 0.1),
-    ])
-
-
 # ── File-based scene sounds (굽는소리/배경음악/섞는소리/소스짜는소리/짜잔/칼질효과음/휘핑기소리) ──
 
 _loops = {}

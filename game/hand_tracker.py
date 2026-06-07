@@ -88,12 +88,6 @@ def _calc_grip(lms):
     return gripped, round(avg_dist, 4)
 
 
-def _world_to_screen(wx, wy, W=1280, H=720):
-    sx = int((wx / 8.0 + 1.0) * W / 2)
-    sy = int((-wy / 4.5 + 1.0) * H / 2)
-    return sx, sy
-
-
 class _SharedResult:
     def __init__(self):
         self._result = None
