@@ -97,9 +97,9 @@ _GR_GRAB_R       = 68
 # ── Knead Stage ───────────────────────────────────────────────────────────────
 _KN_BOWL_CX   = 640
 _KN_BOWL_CY   = 385
-_KN_BOWL_RX   = 278
-_KN_BOWL_RY   = 208
-_KN_ONION_X   = 970    # fried onion pan resting x
+_KN_BOWL_RX   = 300
+_KN_BOWL_RY   = 230
+_KN_ONION_X   = 1005   # fried onion pan resting x
 _KN_ONION_Y   = 330
 _KN_SWIPE_PX  = 85     # pixels needed for a valid swipe
 _KN_ARROW_N   = 7
@@ -1457,27 +1457,29 @@ class CookingScene(BaseMiniGame):
                     cv2.polylines(frame, [np.array(pts_list, np.int32)],
                                   False, col, 10)
 
-        # ── Collection bowl ───────────────────────────────────────────────────
+        # ── Collection bowl (~2x larger; flat fill so contents stay fully visible)
         bcx, bcy = _GR_BOWL_CX, _GR_BOWL_CY
-        cv2.ellipse(frame, (bcx + 8, bcy + 22), (85, 28), 0, 0, 360, (22, 20, 18), -1)
-        cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 0, 180, (208, 214, 222), -1)
-        # 3~4 large ellipses filling bowl as meat accumulates
+        brx_o, bry_o = 200, 100
+        cv2.ellipse(frame, (bcx + 14, bcy + 36), (brx_o, 46), 0, 0, 360, (22, 20, 18), -1)
+        # Single flat fill — nothing drawn over the contents afterward
+        cv2.ellipse(frame, (bcx, bcy), (brx_o, bry_o), 0, 0, 360, (208, 214, 222), -1)
+        # 3~4 large ellipses filling bowl as meat accumulates, kept inside the rim
         if n_strands > 0:
             rng_b = np.random.default_rng(seed=77)
             n_blobs = min(4, 1 + n_strands // 18)
             for bi in range(n_blobs):
-                boff_x = int(rng_b.integers(-38, 38))
-                boff_y = int(rng_b.integers(-14, 14))
-                brx    = int(rng_b.integers(30, 58))
-                bry    = int(rng_b.integers(18, 30))
+                boff_x = int(rng_b.integers(-90, 91))
+                boff_y = int(rng_b.integers(-27, 28))
+                brx    = int(rng_b.integers(49, 96))
+                bry    = int(rng_b.integers(25, 41))
                 bang   = int(rng_b.integers(0, 180))
                 bc     = (int(rng_b.integers(65, 90)),
                           int(rng_b.integers(85, 110)),
                           int(rng_b.integers(175, 210)))
-                cv2.ellipse(frame, (bcx + boff_x, bcy - 6 + boff_y),
+                cv2.ellipse(frame, (bcx + boff_x, bcy + boff_y),
                             (brx, bry), bang, 0, 360, bc, -1)
-        cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 180, 360, (208, 214, 222), -1)
-        cv2.ellipse(frame, (bcx, bcy), (85, 52), 0, 0, 360, (235, 240, 248), 4)
+        # Rim outline drawn last as a thin stroke — frames the bowl without hiding contents
+        cv2.ellipse(frame, (bcx, bcy), (brx_o, bry_o), 0, 0, 360, (235, 240, 248), 5)
 
         # ── Crank handle (grind sub-phase) ────────────────────────────────────
         if self._meat_sub_phase == 'grind':
@@ -2046,6 +2048,7 @@ class CookingScene(BaseMiniGame):
         self._knead_prev_ang      = None
         self._knead_rot_total     = 0.0
         self._knead_mix_angle     = 0.0
+        self._kn_onion_spread     = 1.0
         # Precompute meat blob positions (polar, rotated by mix_angle each frame)
         rng = np.random.default_rng(seed=42)
         n = 88
@@ -2065,8 +2068,8 @@ class CookingScene(BaseMiniGame):
         m = 32
         self._kn_onion_r   = rng2.uniform(0, 68, m)
         self._kn_onion_ang = rng2.uniform(0, 2*math.pi, m)
-        self._kn_onion_w   = rng2.integers(14, 32, m)
-        self._kn_onion_h   = rng2.integers(9,  18, m)
+        self._kn_onion_w   = (rng2.integers(14, 32, m) * 0.7).astype(int)
+        self._kn_onion_h   = (rng2.integers(9,  18, m) * 0.7).astype(int)
         self._kn_onion_rot = rng2.uniform(0, math.pi, m)
         # BGR golden onion colors (R ~200-230, G ~150-185, B ~15-50)
         self._kn_onion_col = np.stack([
@@ -2074,6 +2077,21 @@ class CookingScene(BaseMiniGame):
             rng2.integers(145, 185, m),  # G
             rng2.integers(190, 232, m),  # R  → RGB golden
         ], axis=1)
+
+    _KN_ONION_SPREAD_MAX = 2.6   # cap keeps the scattered cloud inside the bowl wall
+    _KN_ONION_SPREAD_INC = 0.27  # 1.5x the original per-success scatter step
+
+    def _kn_onion_center(self):
+        mix = self._knead_mix_angle
+        ocx = _KN_BOWL_CX + int(58 * math.cos(mix * 0.7 + 0.8))
+        ocy = _KN_BOWL_CY + int(42 * math.sin(mix * 0.7 + 0.8) * 0.76) + 10
+        return ocx, ocy
+
+    def _kn_onion_scatter_step(self):
+        """Called on each successful mix action — nudges the onion further
+        from its center (capped so the cloud stays inside the bowl wall)."""
+        self._kn_onion_spread = min(self._KN_ONION_SPREAD_MAX,
+                                    self._kn_onion_spread + self._KN_ONION_SPREAD_INC)
 
     def _do_knead(self, hands):
         if self._knead_sub == 'pour_onion':
@@ -2092,7 +2110,7 @@ class CookingScene(BaseMiniGame):
             hx = float(hand.screen_x)
             hy = float(hand.screen_y)
             if not self._knead_onion_grabbed:
-                if (hx - self._knead_onion_x)**2 + (hy - _KN_ONION_Y)**2 < 75**2:
+                if (hx - self._knead_onion_x)**2 + (hy - _KN_ONION_Y)**2 < 130**2:
                     self._knead_onion_grabbed = True
                 continue
             self._knead_onion_x = max(float(_KN_BOWL_CX + 50), min(hx, float(_KN_ONION_X)))
@@ -2132,6 +2150,7 @@ class CookingScene(BaseMiniGame):
                 else:
                     self._knead_mix_angle -= 0.45
                 self._flash_event('NICE!', (100, 220, 255), 13)
+                self._kn_onion_scatter_step()
                 if self._knead_idx >= _KN_ARROW_N:
                     self._knead_sub       = 'rotate'
                     self._knead_rot_total = 0.0
@@ -2178,12 +2197,15 @@ class CookingScene(BaseMiniGame):
         cv2.ellipse(frame, (cx, cy), (rx - 20, ry - 15), 0, 0, 360, (215, 200, 168), -1)
 
         # ── Meat fill: base + 2 large ellipses rotating with mix_angle ────────
-        # Base meat fill covering full interior
-        cv2.ellipse(frame, (cx, cy + 8), (rx - 28, ry - 20), 0, 0, 360, (68, 82, 188), -1)
+        # Base meat fill covering full interior (scaled to 0.6x so the bowl reads bigger)
+        _MEAT_SCALE = 0.6
+        cv2.ellipse(frame, (cx, cy + 8),
+                    (int((rx - 28) * _MEAT_SCALE), int((ry - 20) * _MEAT_SCALE)),
+                    0, 0, 360, (68, 82, 188), -1)
         # Two large overlapping blobs with slight offset (rotate with mix)
         for base_ang, r_frac, bw, bh, col in [
-            (0.0, 0.28, rx - 60, ry - 45, (55, 70, 172)),
-            (2.6, 0.22, rx - 80, ry - 55, (78, 95, 200)),
+            (0.0, 0.28, int((rx - 60) * _MEAT_SCALE), int((ry - 45) * _MEAT_SCALE), (55, 70, 172)),
+            (2.6, 0.22, int((rx - 80) * _MEAT_SCALE), int((ry - 55) * _MEAT_SCALE), (78, 95, 200)),
         ]:
             a  = base_ang + mix
             r  = r_frac * (rx - 20)
@@ -2192,12 +2214,16 @@ class CookingScene(BaseMiniGame):
             cv2.ellipse(frame, (fx, fy), (bw, bh), int(math.degrees(a)), 0, 360, col, -1)
 
         # ── Golden onion blob (appears after pour, orbits & mixes) ───────────
+        # Each pass of the hand through it nudges _kn_onion_spread up, so the
+        # pieces gradually scatter outward from their shared center — but the
+        # per-particle radius (_kn_onion_r, max 68) and _KN_ONION_SPREAD_MAX
+        # are chosen so the scattered cloud never crosses the bowl wall.
         if sub in ('arrows', 'rotate'):
-            ocx = cx + int(58 * math.cos(mix * 0.7 + 0.8))
-            ocy = cy + int(42 * math.sin(mix * 0.7 + 0.8) * 0.76) + 10
+            ocx, ocy = self._kn_onion_center()
+            spread = self._kn_onion_spread
             for i in range(len(self._kn_onion_r)):
                 a   = float(self._kn_onion_ang[i]) + mix * 1.1
-                r   = float(self._kn_onion_r[i])
+                r   = float(self._kn_onion_r[i]) * spread
                 fx  = int(ocx + math.cos(a) * r)
                 fy  = int(ocy + math.sin(a) * r * 0.82)
                 bw  = int(self._kn_onion_w[i])
@@ -2212,23 +2238,23 @@ class CookingScene(BaseMiniGame):
         cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 360, (252, 245, 230), 3)
         cv2.ellipse(frame, (cx, cy), (rx - 20, ry - 15), 0, 0, 360, (215, 200, 168), 3)
 
-        # ── Pour onion sub-phase ──────────────────────────────────────────────
+        # ── Pour onion sub-phase (pan enlarged so it reads clearly) ───────────
         if sub == 'pour_onion':
             ox = int(self._knead_onion_x)
             oy = _KN_ONION_Y
             # Pan shadow
-            cv2.ellipse(frame, (ox + 6, oy + 26), (58, 18), 0, 0, 360, (28, 24, 20), -1)
+            cv2.ellipse(frame, (ox + 14, oy + 60), (140, 44), 0, 0, 360, (28, 24, 20), -1)
             # Pan outer rim
-            cv2.ellipse(frame, (ox, oy), (62, 46), 0, 0, 360, (58, 54, 50), -1)
+            cv2.ellipse(frame, (ox, oy), (148, 110), 0, 0, 360, (58, 54, 50), -1)
             # Pan interior (dark iron surface)
-            cv2.ellipse(frame, (ox, oy), (50, 36), 0, 0, 360, (42, 52, 58), -1)
+            cv2.ellipse(frame, (ox, oy), (120, 86), 0, 0, 360, (42, 52, 58), -1)
             # Fried onion fill (golden, covers pan interior)
             rng2 = np.random.default_rng(seed=5)
             for _ in range(16):
-                fx = int(ox + rng2.integers(-38, 38))
-                fy = int(oy + rng2.integers(-24, 24))
-                w2 = int(rng2.integers(8, 17))
-                h2 = int(rng2.integers(4,  9))
+                fx = int(ox + rng2.integers(-92, 93))
+                fy = int(oy + rng2.integers(-58, 59))
+                w2 = int(rng2.integers(20, 40))
+                h2 = int(rng2.integers(10, 22))
                 # Golden onion BGR: (15-45, 140-180, 185-225)
                 gc = (int(rng2.integers(15, 45)),
                       int(rng2.integers(140, 180)),
@@ -2236,13 +2262,13 @@ class CookingScene(BaseMiniGame):
                 cv2.ellipse(frame, (fx, fy), (w2, h2),
                             int(rng2.integers(0, 180)), 0, 360, gc, -1)
             # Pan handle
-            cv2.rectangle(frame, (ox + 60, oy - 8), (ox + 118, oy + 8), (50, 46, 42), -1)
-            cv2.rectangle(frame, (ox + 60, oy - 8), (ox + 118, oy + 8), (78, 74, 68), 2)
-            cv2.ellipse(frame, (ox, oy), (62, 46), 0, 0, 360, (82, 78, 74), 4)
+            cv2.rectangle(frame, (ox + 140, oy - 16), (ox + 196, oy + 16), (50, 46, 42), -1)
+            cv2.rectangle(frame, (ox + 140, oy - 16), (ox + 196, oy + 16), (78, 74, 68), 2)
+            cv2.ellipse(frame, (ox, oy), (148, 110), 0, 0, 360, (82, 78, 74), 6)
             if not self._knead_onion_grabbed:
                 _grab_ring(frame, [ox, oy])
-            cv2.arrowedLine(frame, (ox - 20, oy), (ox - 115, oy),
-                            (80, 220, 140), 3, tipLength=0.28)
+            cv2.arrowedLine(frame, (ox - 48, oy), (ox - 260, oy),
+                            (80, 220, 140), 4, tipLength=0.28)
 
         # ── Arrow mini-game ───────────────────────────────────────────────────
         elif sub == 'arrows':
