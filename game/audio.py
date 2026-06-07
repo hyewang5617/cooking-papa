@@ -90,37 +90,37 @@ def _play(key, segments):
 
 def play_success():
     _play('success', [
-        (523.25, 0.11, 'sine', 0.35),
-        (659.25, 0.11, 'sine', 0.35),
-        (783.99, 0.20, 'sine', 0.375),
+        (523.25, 0.11, 'sine', 0.175),
+        (659.25, 0.11, 'sine', 0.175),
+        (783.99, 0.20, 'sine', 0.1875),
     ])
 
 
 def play_fail():
     _play('fail', [
-        (220.0, 0.13, 'square', 0.275),
-        (164.81, 0.22, 'square', 0.275),
+        (220.0, 0.13, 'square', 0.1375),
+        (164.81, 0.22, 'square', 0.1375),
     ])
 
 
 def play_grab():
     _play('grab', [
-        (392.0, 0.11, 'triangle', 0.3),
+        (392.0, 0.11, 'triangle', 0.15),
     ])
 
 
 def play_stage_clear():
     _play('stage_clear', [
-        (523.25, 0.13, 'sine', 0.35),
-        (659.25, 0.13, 'sine', 0.35),
-        (783.99, 0.13, 'sine', 0.35),
-        (1046.50, 0.30, 'sine', 0.4),
+        (523.25, 0.13, 'sine', 0.175),
+        (659.25, 0.13, 'sine', 0.175),
+        (783.99, 0.13, 'sine', 0.175),
+        (1046.50, 0.30, 'sine', 0.2),
     ])
 
 
 def play_tick():
     _play('tick', [
-        (880.0, 0.05, 'square', 0.2),
+        (880.0, 0.05, 'square', 0.1),
     ])
 
 
@@ -165,6 +165,25 @@ def _speed_sound(base_key, speed):
     return _cache[cache_key]
 
 
+def _trimmed_sound(base_key, skip_seconds):
+    """Return (and cache) `base_key`'s sound with the first `skip_seconds` cut off."""
+    cache_key = (base_key, 'skip', round(skip_seconds, 2))
+    if cache_key not in _cache:
+        base = _file_sound(base_key)
+        if base is None or skip_seconds <= 0:
+            _cache[cache_key] = base
+        else:
+            try:
+                arr = pygame.sndarray.array(base)
+                skip_n = int(_SAMPLE_RATE * skip_seconds)
+                skip_n = min(skip_n, max(0, arr.shape[0] - 1))
+                _cache[cache_key] = pygame.sndarray.make_sound(arr[skip_n:].copy())
+            except Exception as exc:
+                print(f'[audio] failed to trim {base_key}@{skip_seconds}s: {exc}')
+                _cache[cache_key] = base
+    return _cache[cache_key]
+
+
 def _loop(key, active, volume=0.6):
     """Start/stop a looping sound so it plays exactly while `active` is True."""
     if not _ENABLED:
@@ -201,9 +220,32 @@ def loop_mixing(active):
     _loop('섞는소리', active, volume=0.6)
 
 
+_knife_loop_active = False
+_KNIFE_LOOP_KEY    = '칼질효과음@skip1'
+
+
 def loop_knife(active):
-    """칼질효과음 — 칼이 실제로 움직이며 양파를 손질하는 동안만 반복 재생."""
-    _loop('칼질효과음', active, volume=0.6)
+    """칼질효과음 — 칼이 실제로 움직이며 양파를 손질하는 동안만 반복 재생.
+
+    음원의 1초 지점부터 재생하고, 음량은 기존(0.6)의 1.5배(0.9)로 키운다.
+    """
+    global _knife_loop_active
+    if not _ENABLED:
+        return
+    if active:
+        if not _knife_loop_active:
+            snd = _trimmed_sound('칼질효과음', 1.0)
+            if snd is not None:
+                snd.set_volume(0.9)
+                snd.play(loops=-1)
+                _loops[_KNIFE_LOOP_KEY] = snd
+            _knife_loop_active = True
+    else:
+        if _knife_loop_active:
+            old = _loops.pop(_KNIFE_LOOP_KEY, None)
+            if old is not None:
+                old.stop()
+            _knife_loop_active = False
 
 
 def loop_syrup(active):

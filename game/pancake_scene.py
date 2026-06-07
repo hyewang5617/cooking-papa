@@ -108,7 +108,7 @@ _PINTRO_NEXT = {
     'pintro_egg':  'egg_separate',
     'pintro_mix':  'mixer',
     'pintro_cook': 'cook_pancake',
-    'pintro_deco': 'syrup',
+    'pintro_deco': 'stack_pancake',
 }
 
 
@@ -198,6 +198,8 @@ class PancakeScene(BaseMiniGame):
                     self._init_mixer()
                 elif nxt == 'cook_pancake':
                     self._init_cook_pancake()
+                elif nxt == 'stack_pancake':
+                    self._init_stack_pancake()
                 elif nxt == 'syrup':
                     self._init_syrup()
             return []
@@ -590,8 +592,8 @@ class PancakeScene(BaseMiniGame):
                 dx = self._pc_plate_pos[0] - _PC_PAN_CX
                 dy = self._pc_plate_pos[1] - _PC_PAN_CY
                 if dx*dx + dy*dy < (_PC_PAN_R * 0.85)**2:
-                    self._phase = 'stack_pancake'
-                    self._init_stack_pancake()
+                    self._phase    = 'pintro_deco'
+                    self._inter_t0 = 0.0
                 break
 
         # ── Oscillating gauge — frozen in serve ───────────────────────────────
@@ -795,10 +797,8 @@ class PancakeScene(BaseMiniGame):
     def _update_stack_pancake(self, hands):
         if self._st_fail_anim > 0:
             self._st_fail_anim -= 1
-            return
         if self._st_succ_anim > 0:
             self._st_succ_anim -= 1
-            return
 
         speed = _ST_BASE_SPEED * (1.0 + self._st_count * 0.45)
 
@@ -831,8 +831,8 @@ class PancakeScene(BaseMiniGame):
                     self._st_count    += 1
                     self._st_succ_anim = 22
                     if self._st_count >= _ST_GOAL:
-                        self._phase = 'pintro_deco'
-                        self._inter_t0 = 0.0
+                        self._phase = 'syrup'
+                        self._init_syrup()
                         audio.play_stage_clear()
                     else:
                         audio.play_success()

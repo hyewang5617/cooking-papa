@@ -180,7 +180,8 @@ class GameManager:
     def __init__(self):
         self.tracker     = HandTracker()
         self.score       = ScoreManager()
-        self.state       = 'TUTORIAL'
+        self.state       = 'SOUND_NOTICE'
+        self._sound_notice_start = time.time()
         self.game_idx    = 0
         self.game        = None
         self.hand_states = []
@@ -219,6 +220,7 @@ class GameManager:
         bg = get_kitchen_bg(w, h).copy()     # kitchen background for display
 
         output = {
+            'SOUND_NOTICE': self._sound_notice,
             'MENU':         self._menu,
             'STAGE_SELECT': self._stage_select,
             'TUTORIAL':     self._tutorial,
@@ -321,6 +323,24 @@ class GameManager:
         self.score.reset()
 
     # ─────────────────────────────────────────────────────────── states ──────
+
+    def _sound_notice(self, frame):
+        h, w    = frame.shape[:2]
+        elapsed = time.time() - self._sound_notice_start
+
+        overlay = np.zeros_like(frame)
+        overlay[:] = (28, 26, 24)
+        cv2.addWeighted(overlay, 0.93, frame, 0.07, 0, frame)
+
+        _draw_speaker_icon(frame, w // 2, h // 2 - 70, size=85, t=elapsed)
+        draw_text_centered(frame, 'Please turn on your sound!', h // 2 + 95,
+                           scale=1.15, color=COLOR_PRIMARY, thickness=3)
+        draw_text_centered(frame, 'Turn up your volume to enjoy the music and sound effects',
+                           h // 2 + 145, scale=0.62, color=COLOR_WHITE, thickness=1)
+
+        if elapsed >= 3.0:
+            self.state = 'TUTORIAL'
+        return frame
 
     def _menu(self, frame):
         import math as _math
@@ -858,6 +878,32 @@ class GameManager:
                           color=COLOR_DANGER if (self.game.timer_started and
                                                   self.game.time_remaining < 15)
                                             else COLOR_SUCCESS)
+
+
+# ── Sound-on notice icon ─────────────────────────────────────────────────────
+
+def _draw_speaker_icon(frame, cx, cy, size=85, t=0.0):
+    """White speaker glyph with pulsing sound-wave arcs (turn-on-sound notice)."""
+    s   = size
+    col = (255, 255, 255)
+    body = np.array([
+        [cx - s,            cy - int(s * 0.32)],
+        [cx - int(s*0.35),  cy - int(s * 0.32)],
+        [cx + int(s*0.45),  cy - s],
+        [cx + int(s*0.45),  cy + s],
+        [cx - int(s*0.35),  cy + int(s * 0.32)],
+        [cx - s,            cy + int(s * 0.32)],
+    ], np.int32)
+    cv2.fillPoly(frame, [body], col)
+
+    wave_cx = cx + int(s * 0.45)
+    for i in range(3):
+        r     = int(s * (0.7 + i * 0.42))
+        phase = (t * 1.4 - i * 0.35) % 1.2
+        if phase < 1.0:
+            thickness = max(2, int(7 * (1.0 - phase)))
+            cv2.ellipse(frame, (wave_cx, cy), (r, r), 0, -50, 50,
+                        col, thickness, cv2.LINE_AA)
 
 
 # ── Title screen decorations ─────────────────────────────────────────────────

@@ -448,9 +448,11 @@ class CookingScene(BaseMiniGame):
 
         p = self._phase
 
-        audio.loop_cooking(p == 'cook_steak')
+        audio.loop_cooking(p in ('cook_steak', 'onion_fry'))
         audio.loop_mixing(p == 'meat_mix' and self._meat_handle_grabbed)
-        audio.loop_knife(p == 'dice_onion' and self._dice_knife_hand != -1)
+        audio.loop_knife((p == 'dice_onion'  and self._dice_knife_hand  != -1) or
+                         (p == 'slice_onion' and self._slice_knife_hand != -1) or
+                         (p == 'bowl_drop'   and self._bowl_knife_hand  != -1))
 
         if p in _INTRO_NEXT:
             if self._inter_t0 == 0.0:
