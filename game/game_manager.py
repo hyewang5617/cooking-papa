@@ -440,13 +440,6 @@ class GameManager:
                            btn_y + btn_h + 44, scale=0.68,
                            color=(200, 200, 220), thickness=1)
 
-        # Debug shortcut legend (bottom of screen)
-        from .cooking_scene import CookingScene as _CS
-        phases = _CS._DEBUG_PHASES
-        hint = '  '.join(f'{i+1}:{p.replace("_"," ")}' for i, p in enumerate(phases))
-        draw_panel(frame, 0, h - 40, w, 40, alpha=0.75)
-        draw_text_centered(frame, f'DEBUG:  {hint}',
-                           h - 18, scale=0.42, color=(120, 120, 140), thickness=1)
         return frame
 
     def _stage_select(self, frame):

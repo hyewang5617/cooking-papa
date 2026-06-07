@@ -220,6 +220,11 @@ def loop_mixing(active):
     _loop('섞는소리', active, volume=0.6)
 
 
+def loop_grinding(active):
+    """가는소리 — 고기를 가는 동안 반복 재생."""
+    _loop('가는 소리', active, volume=0.6)
+
+
 _knife_loop_active = False
 _KNIFE_LOOP_KEY    = '칼질효과음@skip1'
 
