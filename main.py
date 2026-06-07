@@ -31,7 +31,7 @@ def main():
 
     audio.start_bgm()
     game = GameManager()
-    WIN = 'AR Cooking Mama'
+    WIN = 'Cooking Papa'
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN, 1280, 720)
 

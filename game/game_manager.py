@@ -3,6 +3,7 @@ import math
 import numpy as np
 import time
 
+from . import audio
 from .hand_tracker import HandTracker
 from .hand_avatar   import draw_all as draw_avatars
 from .score_manager import ScoreManager
@@ -445,12 +446,15 @@ class GameManager:
                               (bx_btn+7+bar_w, btn_y+btn_h-4), (255,255,255), -1)
 
         if activated == 0:
+            audio.play_grab()
             self.state = 'STAGE_SELECT'
             self._stage_btn_hold = [0, 0]
         elif activated == 1:
+            audio.play_grab()
             self._tutorial_idx = 0
             self.state = 'TUTORIAL'
         elif activated == 2:
+            audio.play_grab()
             import sys; sys.exit(0)
 
         draw_text_centered(frame, 'Grip  over  a  button  to  select',
@@ -549,9 +553,11 @@ class GameManager:
                               COLOR_PRIMARY, -1)
 
         if activated == 0:
+            audio.play_grab()
             self._selected_scene = CookingScene
             self._begin_countdown()
         elif activated == 1:
+            audio.play_grab()
             self._selected_scene = PancakeScene
             self._begin_countdown()
 
@@ -819,8 +825,10 @@ class GameManager:
                               (bx_btn+7+bar_w, btn_y+btn_h-4), (255,255,255), -1)
 
         if activated == 0:
+            audio.play_grab()
             self._reset()
         elif activated == 1:
+            audio.play_grab()
             import sys; sys.exit(0)
 
         draw_text_centered(frame, 'Grip over a button to select   |   ESC: resume',
