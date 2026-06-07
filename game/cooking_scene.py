@@ -118,6 +118,8 @@ _SK_FLAME_R     = 55
 _SK_ACTION_N    = 6
 _SK_ACTIONS     = ('shake', 'press', 'flip', 'flame')
 _SK_PRESS_HOLD  = 30    # frames to hold for press
+_SK_SPAT_REST   = (_SK_PAN_CX + _SK_PAN_R + 80, _SK_PAN_CY - 70)  # spatula rest spot
+_SK_SPAT_TIP_OFF = 110  # distance from gripped point to paddle tip (top of spatula)
 _SK_SHAKE_PX    = 55    # px per shake stroke
 _SK_SHAKE_N     = 3     # strokes needed for shake
 _SK_FLIP_PX     = 70    # px upward flick
@@ -184,6 +186,7 @@ class CookingScene(BaseMiniGame):
         self._phase     = 'place_onion'   # NEW entry point
         self._held_tool = None
         self._held_by   = -1
+        self._reveal_t0 = 0.0
 
         self.chops = 0
         self.stirs = 0
@@ -341,6 +344,11 @@ class CookingScene(BaseMiniGame):
     def succeeded(self):
         return self._phase == 'complete'
 
+    def check_done(self):
+        if self._phase == 'reveal':
+            return False
+        return super().check_done()
+
     @property
     def required_hands(self):
         return 2 if self._phase == 'toss_meat' else 1
@@ -348,9 +356,8 @@ class CookingScene(BaseMiniGame):
     # Debug shortcut: jump to any phase instantly
     _DEBUG_PHASES = [
         'place_onion', 'peel_skin', 'slice_onion', 'dice_onion', 'bowl_drop',
-        'cook_steak',
+        'cook_steak', 'reveal',
         'onion_fry', 'meat_mix', 'knead', 'toss_meat',
-        'grab_spatula', 'stirring', 'grab_pan', 'flipping',
     ]
 
     def jump_to_phase(self, phase):
@@ -366,6 +373,10 @@ class CookingScene(BaseMiniGame):
             self._init_toss_meat()
         elif phase == 'bowl_drop':
             self._init_bowl_pieces()
+        elif phase == 'cook_steak':
+            self._init_cook_steak()
+        elif phase == 'reveal':
+            self._reveal_t0 = 0.0
 
     @property
     def progress_text(self):
@@ -397,10 +408,6 @@ class CookingScene(BaseMiniGame):
                 labels = {'shake':'Shake Pan','press':'Press Steak','flip':'Flip Steak','flame':'Flame Button'}
                 return f'{labels.get(act,act)}  {self._sk_idx+1}/{_SK_ACTION_N}'
             return 'Done!'
-        if p == 'grab_spatula':     return 'Step 2/3  —  Grab the spatula!'
-        if p == 'stirring':         return f'Step 2/3  —  Stir  {self.stirs}/{STIR_TARGET}'
-        if p == 'grab_pan':         return 'Step 3/3  —  Grab the pan!'
-        if p == 'flipping':         return f'Step 3/3  —  Flip  {self.flips}/{FLIP_TARGET}'
         return 'ALL DONE!'
 
     def update(self, hands):
@@ -456,6 +463,13 @@ class CookingScene(BaseMiniGame):
 
         elif p == 'cook_steak':
             self._do_cook_steak(hands)
+
+        elif p == 'reveal':
+            if self._reveal_t0 == 0.0:
+                self._reveal_t0 = time.time()
+            elif time.time() - self._reveal_t0 > 5.0:
+                self._phase    = 'complete'
+                self._complete = True
 
         elif p == 'grab_spatula':
             events += self._try_grab(hands, self._spatula_pos, 'spatula', 'stirring')
@@ -695,6 +709,8 @@ class CookingScene(BaseMiniGame):
             self._draw_toss_meat(frame)
         elif p == 'cook_steak':
             self._draw_cook_steak(frame)
+        elif p == 'reveal':
+            self._draw_reveal(frame)
         elif p in ('grab_spatula', 'stirring'):
             self._draw_stage2(frame)
         else:
@@ -1611,6 +1627,8 @@ class CookingScene(BaseMiniGame):
         self._sk_flip_side    = 0
         self._sk_pan_grabbed  = False
         self._sk_press_held   = 0
+        self._sk_spat_pos     = [_SK_SPAT_REST[0], _SK_SPAT_REST[1]]
+        self._sk_spat_hand    = -1
         self._sk_shake_ref    = None
         self._sk_shake_dir    = None
         self._sk_shake_done   = 0
@@ -1635,7 +1653,7 @@ class CookingScene(BaseMiniGame):
                 self._sk_flip_prev_y = None
                 self._flash_event('NICE!', (80, 220, 160), 12)
                 if self._sk_idx >= _SK_ACTION_N:
-                    self._phase = 'complete'
+                    self._phase = 'reveal'
             return
 
         if self._sk_idx >= _SK_ACTION_N:
@@ -1655,9 +1673,11 @@ class CookingScene(BaseMiniGame):
             self._sk_shake_done   = 0
             self._sk_flip_prev_y  = None
             self._sk_press_held   = 0
+            self._sk_spat_hand    = -1
+            self._sk_spat_pos     = [_SK_SPAT_REST[0], _SK_SPAT_REST[1]]
             self._sk_steak_x_off  = 0.0
             if self._sk_idx >= _SK_ACTION_N:
-                self._phase = 'grab_spatula'
+                self._phase = 'reveal'
             else:
                 self._flash_event('NICE!', (80, 220, 160), 12)
 
@@ -1694,19 +1714,36 @@ class CookingScene(BaseMiniGame):
                     if self._sk_shake_done >= _SK_SHAKE_N: _advance(); return
 
         elif act == 'press':
-            has_press = False
-            for hand in hands:
-                if hand.detected and hand.gripped:
-                    dy = hand.screen_y - _SK_PAN_CY
-                    if abs(hand.screen_x - _SK_PAN_CX) < _SK_AREA_R and -30 < dy < _SK_AREA_R:
-                        has_press = True
-            if has_press:
-                self._sk_press_held += 1
-                if self._sk_press_held >= _SK_PRESS_HOLD:
-                    self._sk_cook = min(1.0, self._sk_cook + 0.35)
-                    _advance()
-            else:
+            if self._sk_spat_hand == -1:
+                # Not yet holding the spatula — look for a grab near its rest spot
+                for i, hand in enumerate(hands):
+                    if hand.detected and hand.gripped:
+                        dx = hand.screen_x - self._sk_spat_pos[0]
+                        dy = hand.screen_y - self._sk_spat_pos[1]
+                        if dx*dx + dy*dy < 70**2:
+                            self._sk_spat_hand = i
+                            break
                 self._sk_press_held = max(0, self._sk_press_held - 2)
+            else:
+                hand = hands[self._sk_spat_hand] if self._sk_spat_hand < len(hands) else None
+                if hand is None or not hand.detected or not hand.gripped:
+                    self._sk_spat_hand = -1
+                    self._sk_spat_pos  = [_SK_SPAT_REST[0], _SK_SPAT_REST[1]]
+                    self._sk_press_held = max(0, self._sk_press_held - 2)
+                else:
+                    self._sk_spat_pos[0] = hand.screen_x
+                    self._sk_spat_pos[1] = hand.screen_y
+                    # Hold check uses the spatula's paddle tip (top of the spatula)
+                    tip_x = self._sk_spat_pos[0]
+                    tip_y = self._sk_spat_pos[1] - _SK_SPAT_TIP_OFF
+                    dy = tip_y - _SK_PAN_CY
+                    if abs(tip_x - _SK_PAN_CX) < _SK_AREA_R and -30 < dy < _SK_AREA_R:
+                        self._sk_press_held += 1
+                        if self._sk_press_held >= _SK_PRESS_HOLD:
+                            self._sk_cook = min(1.0, self._sk_cook + 0.35)
+                            _advance()
+                    else:
+                        self._sk_press_held = max(0, self._sk_press_held - 2)
 
         elif act == 'flip':
             for hand in hands:
@@ -1864,10 +1901,10 @@ class CookingScene(BaseMiniGame):
         _panel(frame, 0, 0, fw, 52)
         if self._sk_idx < _SK_ACTION_N:
             labels = {'shake':'Grab handle → Shake UP & DOWN  x3',
-                      'press':'Grip near steak → Hold DOWN',
+                      'press':'Grab the spatula → Hold it over the steak',
                       'flip': 'Grab handle → Flick UP sharply',
                       'flame':'Grip the FLAME button'}
-            _shadow_text(frame, labels.get(act,''), fw//2, 30,
+            _shadow_text(frame, labels.get(act,''), int(fw * 0.70), 30,
                          0.75, (80, 220, 255), 1, center=True)
 
         # Demo arrow per action
@@ -1880,9 +1917,13 @@ class CookingScene(BaseMiniGame):
                 cv2.arrowedLine(frame, (cx-200, ay), (cx-200, ay+50),
                                 (80,220,255), 2, tipLength=0.4)
         elif act == 'press':
-            cv2.arrowedLine(frame, (cx+180, cy-80), (cx+180, cy+20),
-                            (80,220,255), 3, tipLength=0.25)
-            _shadow_text(frame, 'HOLD', cx+180, cy+45, 0.6, (80,220,255), 1, center=True)
+            sx, sy = self._sk_spat_pos
+            _draw_spatula(frame, sx, sy)
+            if self._sk_spat_hand == -1:
+                _grab_ring(frame, (sx, sy))
+            else:
+                _shadow_text(frame, 'HOLD over the steak', cx, cy - _SK_AREA_R - 28,
+                             0.6, (80,220,255), 1, center=True)
         elif act == 'flip' and self._sk_pan_grabbed and self._sk_flip_anim == 0:
             cv2.arrowedLine(frame, (cx-180, cy+60), (cx-180, cy-60),
                             (80,220,255), 3, tipLength=0.3)
@@ -2797,6 +2838,94 @@ class CookingScene(BaseMiniGame):
         elif p == 'stirring': count_str = f'  ({self.stirs}/{STIR_TARGET})'
         elif p == 'flipping': count_str = f'  ({self.flips}/{FLIP_TARGET})'
         _shadow_text(frame, text + count_str, w // 2, 116, 0.9, color, 2, center=True)
+
+
+    def _draw_reveal(self, frame):
+        from .ui import draw_reveal_burst
+        h, w = frame.shape[:2]
+        cx, cy = w // 2, h // 2
+        t = time.time()
+
+        draw_reveal_burst(frame, cx, cy, t)
+
+        # ── Plate (under everything) ──────────────────────────────────────────
+        px, py = cx, cy + 35
+        cv2.ellipse(frame, (px, py), (340, 150), 0, 0, 360, (90, 90, 95), -1)
+        cv2.ellipse(frame, (px, py), (340, 150), 0, 0, 360, (60, 60, 65), 3)
+        cv2.ellipse(frame, (px, py - 8), (278, 118), 0, 0, 360, (235, 235, 238), -1)
+        cv2.ellipse(frame, (px, py - 8), (278, 118), 0, 0, 360, (200, 200, 205), 2)
+        cv2.ellipse(frame, (px, py - 8), (190, 78), 0, 0, 360, (210, 212, 218), 1)
+
+        # ── Steak (center of plate) ───────────────────────────────────────────
+        s = 140
+        sx, sy = px + 35, py - 25
+        pts = np.array([
+            [sx - s,              sy + int(s*0.2)],
+            [sx - int(s*0.75),    sy - int(s*0.6)],
+            [sx - int(s*0.15),    sy - int(s*0.75)],
+            [sx + int(s*0.45),    sy - int(s*0.65)],
+            [sx + s,              sy - int(s*0.15)],
+            [sx + int(s*1.05),    sy + int(s*0.3)],
+            [sx + int(s*0.5),     sy + int(s*0.65)],
+            [sx - int(s*0.25),    sy + int(s*0.7)],
+            [sx - int(s*0.8),     sy + int(s*0.5)],
+        ], np.int32)
+        cv2.fillPoly(frame, [pts + np.array([4, 5])], (18, 15, 12))
+        cv2.fillPoly(frame, [pts], (55, 78, 158))
+        # Grill marks
+        for gx in range(sx - int(s*0.7), sx + int(s*0.9), int(s*0.38)):
+            cv2.line(frame, (gx - int(s*0.18), sy + int(s*0.3)),
+                     (gx + int(s*0.18), sy - int(s*0.3)), (30, 48, 100), 5)
+        cv2.polylines(frame, [pts], True, (35, 55, 110), 3)
+
+        # ── Paprika & lemon, side by side on the left of the plate ───────────
+        gx0, gy0 = px - 235, py + 5
+
+        # Paprika (bell pepper), behind/left
+        ppx, ppy, pps = gx0 - 20, gy0 + 10, 78
+        body = np.array([
+            [ppx - int(pps*0.62), ppy - int(pps*0.05)],
+            [ppx - int(pps*0.74), ppy + int(pps*0.55)],
+            [ppx - int(pps*0.30), ppy + int(pps*0.92)],
+            [ppx + int(pps*0.18), ppy + int(pps*0.95)],
+            [ppx + int(pps*0.66), ppy + int(pps*0.50)],
+            [ppx + int(pps*0.58), ppy - int(pps*0.10)],
+            [ppx + int(pps*0.18), ppy - int(pps*0.40)],
+            [ppx - int(pps*0.18), ppy - int(pps*0.38)],
+        ], np.int32)
+        cv2.fillPoly(frame, [body + np.array([3, 4])], (15, 20, 60))
+        cv2.fillPoly(frame, [body], (40, 55, 215))
+        # glossy highlight
+        cv2.ellipse(frame, (ppx - int(pps*0.28), ppy + int(pps*0.05)),
+                    (int(pps*0.16), int(pps*0.30)), 20, 0, 360, (110, 130, 245), -1)
+        cv2.polylines(frame, [body], True, (25, 35, 150), 2)
+        # stem
+        stem = np.array([
+            [ppx - int(pps*0.16), ppy - int(pps*0.36)],
+            [ppx + int(pps*0.16), ppy - int(pps*0.36)],
+            [ppx + int(pps*0.10), ppy - int(pps*0.62)],
+            [ppx - int(pps*0.10), ppy - int(pps*0.62)],
+        ], np.int32)
+        cv2.fillPoly(frame, [stem], (35, 110, 60))
+        cv2.polylines(frame, [stem], True, (20, 80, 42), 2)
+
+        # Lemon slice, slightly forward/right of the paprika
+        lx, ly, lr = gx0 + 95, gy0 + 35, 62
+        cv2.circle(frame, (lx+2, ly+3), lr+3, (12, 14, 12), -1)
+        cv2.circle(frame, (lx, ly), lr, (0, 220, 240), -1)           # yellow peel
+        cv2.circle(frame, (lx, ly), int(lr*0.82), (15, 240, 255), -1) # bright flesh
+        for k in range(6):
+            a = math.pi / 3 * k
+            cv2.line(frame,
+                     (int(lx + 6*math.cos(a)), int(ly + 6*math.sin(a))),
+                     (int(lx + lr*0.80*math.cos(a)), int(ly + lr*0.80*math.sin(a))),
+                     (8, 195, 230), 2)
+        cv2.circle(frame, (lx, ly), int(lr*0.82), (5, 170, 215), 3)
+        cv2.circle(frame, (lx, ly), lr, (0, 155, 190), 4)
+
+        # ── Title text ────────────────────────────────────────────────────────
+        _shadow_text(frame, 'Salisbury Steak!', cx, cy - 210,
+                     1.4, (30, 190, 255), 3, center=True)
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────────

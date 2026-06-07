@@ -101,11 +101,12 @@ class PancakeScene(BaseMiniGame):
     duration    = 180.0
     grab_phase  = True
 
-    _DEBUG_PHASES = ['egg_separate', 'mixer', 'cook_pancake', 'stack_pancake', 'syrup']
+    _DEBUG_PHASES = ['egg_separate', 'mixer', 'cook_pancake', 'stack_pancake', 'syrup', 'reveal']
 
     def __init__(self):
         super().__init__()
-        self._phase = 'egg_separate'
+        self._phase     = 'egg_separate'
+        self._reveal_t0 = 0.0
         self._init_egg()
         self._init_mixer()
         self._init_cook_pancake()
@@ -123,6 +124,8 @@ class PancakeScene(BaseMiniGame):
             self._init_stack_pancake()
         elif phase == 'syrup':
             self._init_syrup()
+        elif phase == 'reveal':
+            self._reveal_t0 = 0.0
 
     def _init_egg(self):
         self._e_current   = 0
@@ -165,6 +168,11 @@ class PancakeScene(BaseMiniGame):
             self._update_stack_pancake(hands)
         elif self._phase == 'syrup':
             self._update_syrup(hands)
+        elif self._phase == 'reveal':
+            if self._reveal_t0 == 0.0:
+                self._reveal_t0 = time.time()
+            elif time.time() - self._reveal_t0 > 5.0:
+                self._phase = 'complete'
         return []
 
     def _update_egg(self, hands):
@@ -268,6 +276,8 @@ class PancakeScene(BaseMiniGame):
             return self._draw_stack_pancake(frame)
         if self._phase == 'syrup':
             return self._draw_syrup(frame)
+        if self._phase == 'reveal':
+            return self._draw_reveal(frame)
 
         # ── Bowl ──────────────────────────────────────────────────────────────
         bcx, bcy = _E_BOWL_CX, _E_BOWL_CY
@@ -895,7 +905,7 @@ class PancakeScene(BaseMiniGame):
             break
 
         if self._sy_total_len >= _SY_GOAL_LEN:
-            self._phase = 'complete'
+            self._phase = 'reveal'
 
     def _draw_syrup(self, frame):
         t = time.time()
@@ -1149,3 +1159,53 @@ class PancakeScene(BaseMiniGame):
         _shadow_text(frame, 'Add ingredients only when GREEN',
                      w//2, h-32, 0.58, (190, 200, 215), 1, center=True)
         return frame
+
+    def _draw_reveal(self, frame):
+        from .ui import draw_reveal_burst
+        h, w = frame.shape[:2]
+        cx, cy = w // 2, h // 2
+        t = time.time()
+
+        draw_reveal_burst(frame, cx, cy, t)
+
+        # ── Pancake stack (center) ────────────────────────────────────────────
+        pr = 175   # pancake radius
+        for layer, yoff in [(2, 28), (1, 12), (0, 0)]:
+            shade = (38 + layer*8, 128 + layer*8, 172 + layer*8)
+            shade_d = (25 + layer*6, 102 + layer*6, 145 + layer*6)
+            cv2.ellipse(frame, (cx+4, cy+yoff+6), (pr, int(pr*0.38)), 0, 0, 360, (18,14,10), -1)
+            cv2.ellipse(frame, (cx, cy+yoff), (pr, int(pr*0.38)), 0, 0, 360, shade, -1)
+            cv2.ellipse(frame, (cx, cy+yoff), (pr, int(pr*0.38)), 0, 0, 360, shade_d, 4)
+
+        # Butter pat (pale yellow rectangle on top)
+        bw, bh2 = 75, 38
+        bx2, by2 = cx - bw//2, cy - int(pr*0.25)
+        cv2.rectangle(frame, (bx2+3, by2+4), (bx2+bw+3, by2+bh2+4), (18,14,10), -1)
+        cv2.rectangle(frame, (bx2, by2), (bx2+bw, by2+bh2), (120, 225, 250), -1)
+        cv2.rectangle(frame, (bx2, by2), (bx2+bw, by2+bh2), (90, 185, 210), 3)
+
+        # Syrup drizzle lines (wavy brown)
+        SYRUP = (18, 85, 165)   # dark amber BGR
+        import random as _rnd
+        _rnd.seed(42)
+        for _ in range(7):
+            sx0 = cx + _rnd.randint(-pr + 20, pr - 20)
+            sy0 = cy + _rnd.randint(-int(pr*0.3), int(pr*0.2))
+            pts_sy = [(sx0, sy0)]
+            for seg in range(5):
+                nx2 = pts_sy[-1][0] + _rnd.randint(18, 38)
+                ny2 = pts_sy[-1][1] + _rnd.randint(-14, 14)
+                pts_sy.append((nx2, ny2))
+            for k in range(len(pts_sy)-1):
+                cv2.line(frame, pts_sy[k], pts_sy[k+1], SYRUP, 5, cv2.LINE_AA)
+
+        # Cinnamon powder specks
+        _rnd.seed(7)
+        for _ in range(30):
+            spx = cx + _rnd.randint(-pr+10, pr-10)
+            spy = cy + _rnd.randint(-int(pr*0.3), int(pr*0.1))
+            cv2.circle(frame, (spx, spy), _rnd.randint(1, 3), (22, 58, 105), -1)
+
+        # ── Title text ────────────────────────────────────────────────────────
+        _shadow_text(frame, 'Pancakes!', cx, cy - 230,
+                     1.4, (30, 190, 255), 3, center=True)
